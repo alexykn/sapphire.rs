@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 
 /// Package manifest for Shard
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,14 +30,37 @@ pub struct Manifest {
 /// Metadata for the manifest
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Metadata {
+    /// Brief description of the shard
     #[serde(default)]
     pub description: String,
     
+    /// Whether this shard is protected from modifications
     #[serde(default)]
     pub protected: bool,
     
+    /// Shard schema version
     #[serde(default)]
     pub version: String,
+    
+    /// List of users allowed to modify this shard even if protected
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+    
+    /// Digital signature for verification (for future implementation)
+    #[serde(default)]
+    pub signature: Option<String>,
+    
+    /// Last modified timestamp
+    #[serde(default)]
+    pub last_modified: Option<DateTime<Utc>>,
+    
+    /// User who last modified the shard
+    #[serde(default)]
+    pub last_modified_by: Option<String>,
+    
+    /// Protection level (0-3) with 0 being unprotected and 3 being system level
+    #[serde(default)]
+    pub protection_level: u8,
 }
 
 /// Homebrew formula
@@ -100,6 +124,11 @@ impl Manifest {
                 description: "Package manifest".to_string(),
                 protected: false,
                 version: "0.1.0".to_string(),
+                allowed_users: Vec::new(),
+                signature: None,
+                last_modified: Some(Utc::now()),
+                last_modified_by: std::env::var("USER").ok(),
+                protection_level: 0,
             },
             formulas: Vec::new(),
             casks: Vec::new(),
@@ -107,6 +136,33 @@ impl Manifest {
             formulae: Vec::new(),
             brews: Vec::new(),
         }
+    }
+    
+    /// Check if a user is allowed to modify this manifest
+    pub fn can_modify(&self, username: &str) -> bool {
+        // If not protected, anyone can modify
+        if !self.metadata.protected {
+            return true;
+        }
+        
+        // If protection_level is 3 (system level), only allowed users can modify
+        if self.metadata.protection_level >= 3 {
+            return self.metadata.allowed_users.contains(&username.to_string());
+        }
+        
+        // For protection levels 1-2, check allowed users
+        if !self.metadata.allowed_users.is_empty() {
+            return self.metadata.allowed_users.contains(&username.to_string());
+        }
+        
+        // Default to not allowing modification if protected
+        false
+    }
+    
+    /// Update last modified information
+    pub fn update_modification_info(&mut self) {
+        self.metadata.last_modified = Some(Utc::now());
+        self.metadata.last_modified_by = std::env::var("USER").ok();
     }
     
     /// Load a manifest from a file
@@ -411,6 +467,11 @@ impl Clone for Metadata {
             description: self.description.clone(),
             protected: self.protected,
             version: self.version.clone(),
+            allowed_users: self.allowed_users.clone(),
+            signature: self.signature.clone(),
+            last_modified: self.last_modified.clone(),
+            last_modified_by: self.last_modified_by.clone(),
+            protection_level: self.protection_level,
         }
     }
 }

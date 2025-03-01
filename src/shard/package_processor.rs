@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use console::style;
+use indicatif::{ProgressBar, ProgressStyle};
 use crate::shard::manifest::{PackageState, Formula, Cask};
 use crate::shard::brew_client::BrewClient;
 use std::process::Command;
@@ -59,14 +60,33 @@ where
     S: AsRef<str>,
 {
     let options_text = if has_options { " with custom options" } else { "" };
-    println!("{} {}{}: {}", 
+    
+    // Create progress bar for individual package operations
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} {msg}")
+            .unwrap()
+    );
+    
+    pb.set_message(format!("{} {}{}: {}", 
         operation.as_str(), 
         package_type, 
         options_text,
-        style(package_name).bold());
+        style(package_name).bold()));
+    
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
     
     match command() {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            pb.finish_with_message(format!("{} {} {}{}: {}", 
+                style("✓").green().bold(),
+                operation.as_str(), 
+                package_type, 
+                options_text,
+                style(package_name).bold()));
+            Ok(())
+        },
         Err(e) => {
             let error_msg = e.to_string();
             if error_msg.contains("already installed") {
@@ -76,14 +96,20 @@ where
                     } else {
                         "is already installed"
                     };
-                    println!("{} {} {}", package_type, style(package_name).bold(), status_msg);
+                    pb.finish_with_message(format!("{} {} {}",
+                        style(package_type).bold(),
+                        style(package_name).bold(),
+                        status_msg));
+                } else {
+                    pb.finish();
                 }
                 Ok(())
             } else {
-                eprintln!("Error {} {}: {}", 
+                pb.finish_with_message(format!("{} Error {} {}: {}", 
+                    style("✗").red().bold(),
                     operation.as_str().to_lowercase(), 
-                    package_name, 
-                    e);
+                    style(package_name).bold(), 
+                    e));
                 Err(e)
             }
         }
@@ -343,22 +369,70 @@ where
     
     println!("{} {} {}s...", operation, packages.len(), package_type.as_str());
     
-    match operation_fn(packages) {
-        Ok(_) => {
-            println!("{} Successfully {}d {} {}s", 
-                style("✓").bold().green(),
-                operation.to_lowercase(),
-                packages.len(),
-                package_type.as_str());
-            Ok(())
-        },
-        Err(e) => {
-            eprintln!("Error {}ing {} {}s: {}", 
-                operation.to_lowercase(),
-                packages.len(),
-                package_type.as_str(),
-                e);
-            Err(e)
+    // Show detailed list of packages to install
+    for package in packages {
+        println!("  → Will {} {}: {}", 
+            operation.to_lowercase(), 
+            package_type.as_str(), 
+            style(package).bold());
+    }
+    
+    // Create a progress bar
+    let progress_bar = ProgressBar::new(packages.len() as u64);
+    progress_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("=>-")
+    );
+    progress_bar.set_message(format!("{}ing {} packages", operation, package_type.as_str()));
+    
+    // For individual installation, we'll manually handle each package with progress
+    if packages.len() == 1 {
+        let package = &packages[0];
+        progress_bar.set_message(format!("{}ing {}: {}", 
+            operation.to_lowercase(), 
+            package_type.as_str(), 
+            style(package).bold()));
+        
+        match operation_fn(packages) {
+            Ok(_) => {
+                progress_bar.finish_with_message(format!("{} {} {} {}",
+                    style("✓").bold().green(),
+                    operation,
+                    package_type.as_str(),
+                    style(package).bold()));
+                Ok(())
+            },
+            Err(e) => {
+                progress_bar.finish_with_message(format!("{} Failed to {} {}: {}",
+                    style("✗").bold().red(),
+                    operation.to_lowercase(),
+                    package,
+                    e));
+                Err(e)
+            }
+        }
+    } else {
+        // For multiple packages
+        match operation_fn(packages) {
+            Ok(_) => {
+                progress_bar.finish_with_message(format!("{} Successfully {}d {} {}s", 
+                    style("✓").bold().green(),
+                    operation.to_lowercase(),
+                    packages.len(),
+                    package_type.as_str()));
+                Ok(())
+            },
+            Err(e) => {
+                progress_bar.finish_with_message(format!("{} Error {}ing {} {}s: {}", 
+                    style("✗").bold().red(),
+                    operation.to_lowercase(),
+                    packages.len(),
+                    package_type.as_str(),
+                    e));
+                Err(e)
+            }
         }
     }
 }

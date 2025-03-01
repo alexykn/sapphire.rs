@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::fmt;
 use std::error::Error as StdError;
 use crate::shard::manifest::Manifest;
+use chrono;
 
 /// Custom error type for shard management operations
 #[derive(Debug)]
@@ -108,6 +109,8 @@ pub struct ShardManager {
     backups_dir: PathBuf,
     /// Protected shard names that cannot be disabled
     protected_shards: Vec<String>,
+    /// Current username for permission checks
+    current_user: String,
 }
 
 impl ShardManager {
@@ -118,11 +121,18 @@ impl ShardManager {
         let disabled_dir = format!("{}/disabled", shards_dir);
         let backups_dir = shellexpand::tilde("~/.sapphire/backups").to_string();
         
+        // Get current username for permission checks
+        let current_user = match std::env::var("USER") {
+            Ok(user) => user,
+            Err(_) => "unknown".to_string(),
+        };
+        
         Ok(Self {
             shards_dir: PathBuf::from(shards_dir),
             disabled_dir: PathBuf::from(disabled_dir),
             backups_dir: PathBuf::from(backups_dir),
             protected_shards: vec!["system".to_string(), "user".to_string()],
+            current_user,
         })
     }
     
@@ -130,22 +140,36 @@ impl ShardManager {
     pub fn with_paths(shards_dir: PathBuf, disabled_dir: PathBuf) -> Self {
         let backups_dir = shellexpand::tilde("~/.sapphire/backups").to_string();
         
+        // Get current username for permission checks
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
         Self {
             shards_dir,
             disabled_dir,
             backups_dir: PathBuf::from(backups_dir),
             protected_shards: vec!["system".to_string(), "user".to_string()],
+            current_user,
         }
     }
     
     /// Create a new shard manager with custom paths including backups
     pub fn with_all_paths(shards_dir: PathBuf, disabled_dir: PathBuf, backups_dir: PathBuf) -> Self {
+        // Get current username for permission checks
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
         Self {
             shards_dir,
             disabled_dir,
             backups_dir,
             protected_shards: vec!["system".to_string(), "user".to_string()],
+            current_user,
         }
+    }
+    
+    /// Set the current user for permission checks
+    pub fn with_user(mut self, username: &str) -> Self {
+        self.current_user = username.to_string();
+        self
     }
     
     /// Set protected shards that cannot be disabled
@@ -165,7 +189,9 @@ impl ShardManager {
         let shard_path = self.get_shard_path(name);
         if shard_path.exists() {
             if let Ok(manifest) = Manifest::from_file(shard_path.to_str().unwrap_or_default()) {
-                return Ok(manifest.metadata.protected);
+                // Use the new protection level field
+                let is_protected = manifest.metadata.protected || manifest.metadata.protection_level > 0;
+                return Ok(is_protected);
             }
         }
         
@@ -173,11 +199,59 @@ impl ShardManager {
         let disabled_path = self.get_disabled_shard_path(name);
         if disabled_path.exists() {
             if let Ok(manifest) = Manifest::from_file(disabled_path.to_str().unwrap_or_default()) {
-                return Ok(manifest.metadata.protected);
+                // Use the new protection level field
+                let is_protected = manifest.metadata.protected || manifest.metadata.protection_level > 0;
+                return Ok(is_protected);
             }
         }
         
         Ok(false)
+    }
+    
+    /// Check if the current user can modify a shard
+    fn can_modify_shard(&self, name: &str) -> Result<bool> {
+        let shard_path = self.get_shard_path(name);
+        if shard_path.exists() {
+            if let Ok(manifest) = Manifest::from_file(shard_path.to_str().unwrap_or_default()) {
+                return Ok(manifest.can_modify(&self.current_user));
+            }
+        }
+        
+        // Check disabled path as well
+        let disabled_path = self.get_disabled_shard_path(name);
+        if disabled_path.exists() {
+            if let Ok(manifest) = Manifest::from_file(disabled_path.to_str().unwrap_or_default()) {
+                return Ok(manifest.can_modify(&self.current_user));
+            }
+        }
+        
+        // Default to true - if shard doesn't exist yet, we can create it
+        Ok(true)
+    }
+    
+    /// Create a backup of a shard before modification
+    fn backup_shard(&self, name: &str) -> Result<PathBuf> {
+        let shard_path = self.get_shard_path(name);
+        if !shard_path.exists() {
+            bail!("Cannot backup non-existent shard: {}", name);
+        }
+        
+        // Create backup directory if it doesn't exist
+        fs::create_dir_all(&self.backups_dir)
+            .with_context(|| format!("Failed to create backup directory: {}", self.backups_dir.display()))?;
+            
+        // Generate a timestamp for the backup filename
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup_path = self.backups_dir.join(format!("{}_backup_{}.toml", name, timestamp));
+        
+        // Copy the shard file to the backup location
+        fs::copy(&shard_path, &backup_path)
+            .with_context(|| format!("Failed to backup shard {} to {}", name, backup_path.display()))?;
+        
+        Ok(backup_path)
     }
     
     /// Create a new shard
@@ -206,6 +280,14 @@ impl ShardManager {
             .unwrap_or(&format!("Custom shard: {}", name))
             .to_string();
         
+        // Auto-allow current user to modify
+        if !self.current_user.is_empty() && self.current_user != "unknown" {
+            manifest.metadata.allowed_users.push(self.current_user.clone());
+        }
+        
+        // Set last modified information
+        manifest.update_modification_info();
+        
         // Save the manifest
         manifest.to_file(shard_path.to_str().unwrap_or_default())
             .context("Failed to create shard file")?;
@@ -223,7 +305,17 @@ impl ShardManager {
         
         // Check if it's a protected shard
         if self.is_protected(name)? {
-            bail!("Cannot delete protected shard: {}", name);
+            // Additional check if the user can modify despite it being protected
+            if !self.can_modify_shard(name)? {
+                bail!("Cannot delete protected shard: {}", name);
+            } else if !force {
+                println!("{} Shard '{}' is protected but you have permission to delete it", 
+                    style("Warning:").bold().yellow(), style(name).bold());
+                if !Confirm::new().with_prompt("Are you sure you want to delete this protected shard?").default(false).interact()? {
+                    println!("Operation cancelled");
+                    return Ok(());
+                }
+            }
         }
         
         // Get shard path
@@ -236,6 +328,21 @@ impl ShardManager {
         
         if !is_active && !is_disabled {
             bail!("Shard '{}' not found", name);
+        }
+        
+        // Create backup for audit trail before deletion
+        if is_active {
+            match self.backup_shard(name) {
+                Ok(backup_path) => {
+                    println!("Created backup at: {}", backup_path.display());
+                },
+                Err(e) => {
+                    println!("Warning: Failed to create backup before deletion: {}", e);
+                    if !force {
+                        bail!("Aborting deletion due to backup failure");
+                    }
+                }
+            }
         }
         
         // Confirm deletion unless force is used
@@ -270,7 +377,17 @@ impl ShardManager {
         
         // Check if it's a protected shard
         if self.is_protected(name)? {
-            bail!("Cannot disable protected shard: {}", name);
+            // Additional check if the user can modify despite it being protected
+            if !self.can_modify_shard(name)? {
+                bail!("Cannot disable protected shard: {}", name);
+            } else {
+                println!("{} Shard '{}' is protected but you have permission to disable it", 
+                    style("Warning:").bold().yellow(), style(name).bold());
+                if !Confirm::new().with_prompt("Are you sure you want to disable this protected shard?").default(false).interact()? {
+                    println!("Operation cancelled");
+                    return Ok(());
+                }
+            }
         }
         
         // Get source and destination paths
@@ -285,6 +402,16 @@ impl ShardManager {
             }
             
             bail!("Shard '{}' not found", name);
+        }
+        
+        // Create backup before disabling
+        match self.backup_shard(name) {
+            Ok(backup_path) => {
+                println!("Created backup at: {}", backup_path.display());
+            },
+            Err(e) => {
+                println!("Warning: Failed to create backup before disabling: {}", e);
+            }
         }
         
         // Create disabled directory if it doesn't exist
@@ -329,15 +456,26 @@ impl ShardManager {
         
         let dest_path = self.get_shard_path(name);
         
-        // Move the file from disabled directory
-        fs::rename(&source_path, &dest_path)
-            .with_context(|| format!("Failed to enable shard: {}", name))?;
+        // Read the manifest to update last modified information
+        if let Ok(mut manifest) = Manifest::from_file(source_path.to_str().unwrap_or_default()) {
+            // Update modification info
+            manifest.update_modification_info();
+            
+            // Write the updated manifest directly to the destination
+            manifest.to_file(dest_path.to_str().unwrap_or_default())?;
+            
+            // Delete the source file
+            fs::remove_file(&source_path)?;
+        } else {
+            // Fall back to simple file move if manifest can't be read
+            fs::rename(&source_path, &dest_path)
+                .with_context(|| format!("Failed to enable shard: {}", name))?;
+        }
         
         println!("{} Enabled shard: {}", style("✓").bold().green(), style(name).bold());
         Ok(())
     }
- 
-
+    
     /// Get the status of a shard
     pub fn get_shard_status(&self, name: &str) -> ShardStatus {
         if !self.is_valid_shard_name(name) {
@@ -430,6 +568,24 @@ impl ShardManager {
     /// Check if a shard is protected
     pub fn shard_is_protected(&self, name: &str) -> bool {
         self.is_protected(name).unwrap_or(false)
+    }
+    
+    /// Check if a user can modify a shard
+    pub fn shard_can_be_modified_by(&self, name: &str, username: &str) -> bool {
+        // Create a temporary manager with the specified user
+        let temp_manager = self.clone().with_user(username);
+        temp_manager.can_modify_shard(name).unwrap_or(false)
+    }
+    
+    /// Clone the ShardManager
+    pub fn clone(&self) -> Self {
+        Self {
+            shards_dir: self.shards_dir.clone(),
+            disabled_dir: self.disabled_dir.clone(),
+            backups_dir: self.backups_dir.clone(),
+            protected_shards: self.protected_shards.clone(),
+            current_user: self.current_user.clone(),
+        }
     }
     
     /// List all available shards

@@ -4,6 +4,7 @@ use std::fmt::Write;
 use std::time::{Duration, Instant};
 use std::thread;
 use std::io::{self, Read};
+use crate::utils::validation;
 
 /// Homebrew client for interacting with brew CLI
 pub struct BrewClient {
@@ -44,6 +45,27 @@ impl BrewClient {
     pub fn with_timeout(mut self, seconds: u64) -> Self {
         self.timeout = Some(seconds);
         self
+    }
+    
+    // Added validation methods
+    /// Validate a package name (formula or cask)
+    fn validate_package_name(&self, name: &str) -> Result<String> {
+        validation::validate_package_name(name).map(|s| s.to_string())
+    }
+    
+    /// Validate a tap name
+    fn validate_tap_name(&self, name: &str) -> Result<String> {
+        validation::validate_tap_name(name).map(|s| s.to_string())
+    }
+    
+    /// Validate command options
+    fn validate_options(&self, options: &[String]) -> Result<()> {
+        validation::validate_options(options)
+    }
+    
+    /// Validate a search query
+    fn validate_search_query(&self, query: &str) -> Result<String> {
+        validation::validate_search_query(query).map(|s| s.to_string())
     }
     
     // Private helper methods
@@ -169,6 +191,9 @@ impl BrewClient {
     
     /// Execute a brew command with custom arguments and return its output if successful
     fn execute_brew_command_with_args(&self, base_args: &[&str], extra_args: &[String]) -> Result<std::process::Output> {
+        // Validate extra arguments for safety
+        self.validate_options(extra_args)?;
+        
         let mut cmd = Command::new(&self.brew_path);
         
         // Add base arguments
@@ -222,19 +247,28 @@ impl BrewClient {
 
     /// Add a Homebrew tap
     pub fn add_tap(&self, tap: &str) -> Result<()> {
-        self.execute_brew_command(&["tap", tap])?;
+        // Validate tap name before execution
+        let validated_tap = self.validate_tap_name(tap)?;
+        
+        self.execute_brew_command(&["tap", &validated_tap])?;
         Ok(())
     }
     
     /// Install a Homebrew formula
     pub fn install_formula(&self, formula: &str, options: &[String]) -> Result<()> {
-        self.execute_brew_command_with_args(&["install", formula], options)?;
+        // Validate formula name before execution
+        let validated_formula = self.validate_package_name(formula)?;
+        
+        self.execute_brew_command_with_args(&["install", &validated_formula], options)?;
         Ok(())
     }
     
     /// Install a Homebrew cask
     pub fn install_cask(&self, cask: &str, options: &[String]) -> Result<()> {
-        self.execute_brew_command_with_args(&["install", "--cask", cask], options)?;
+        // Validate cask name before execution
+        let validated_cask = self.validate_package_name(cask)?;
+        
+        self.execute_brew_command_with_args(&["install", "--cask", &validated_cask], options)?;
         Ok(())
     }
 
@@ -262,6 +296,11 @@ impl BrewClient {
             return Ok(());
         }
         
+        // Validate all package names
+        for formula in formulae {
+            self.validate_package_name(formula)?;
+        }
+        
         // Convert String slice to &str slice for the helper function
         let formulae_refs: Vec<&str> = formulae.iter().map(|s| s.as_str()).collect();
         
@@ -277,6 +316,11 @@ impl BrewClient {
     pub fn batch_install_casks(&self, casks: &[String]) -> Result<()> {
         if casks.is_empty() {
             return Ok(());
+        }
+        
+        // Validate all package names
+        for cask in casks {
+            self.validate_package_name(cask)?;
         }
         
         // Convert String slice to &str slice for the helper function
@@ -296,6 +340,11 @@ impl BrewClient {
             return Ok(());
         }
         
+        // Validate all package names
+        for formula in formulae {
+            self.validate_package_name(formula)?;
+        }
+        
         let formulae_refs: Vec<&str> = formulae.iter().map(|s| s.as_str()).collect();
         let mut args = vec!["upgrade"];
         args.extend(formulae_refs.iter());
@@ -310,6 +359,11 @@ impl BrewClient {
             return Ok(());
         }
         
+        // Validate all package names
+        for cask in casks {
+            self.validate_package_name(cask)?;
+        }
+        
         let cask_refs: Vec<&str> = casks.iter().map(|s| s.as_str()).collect();
         let mut args = vec!["upgrade", "--cask"];
         args.extend(cask_refs.iter());
@@ -320,19 +374,28 @@ impl BrewClient {
 
     /// Upgrade a formula with custom options
     pub fn upgrade_formula_with_options(&self, formula: &str, options: &[String]) -> Result<()> {
-        self.execute_brew_command_with_args(&["upgrade", formula], options)?;
+        // Validate formula name and options
+        let validated_formula = self.validate_package_name(formula)?;
+        
+        self.execute_brew_command_with_args(&["upgrade", &validated_formula], options)?;
         Ok(())
     }
 
     /// Upgrade a cask with custom options
     pub fn upgrade_cask_with_options(&self, cask: &str, options: &[String]) -> Result<()> {
-        self.execute_brew_command_with_args(&["upgrade", "--cask", cask], options)?;
+        // Validate cask name and options
+        let validated_cask = self.validate_package_name(cask)?;
+        
+        self.execute_brew_command_with_args(&["upgrade", "--cask", &validated_cask], options)?;
         Ok(())
     }
 
     /// Uninstall a formula
     pub fn uninstall_formula(&self, formula: &str, force: bool) -> Result<()> {
-        let mut args = vec!["uninstall", "--formula", formula];
+        // Validate formula name
+        let validated_formula = self.validate_package_name(formula)?;
+        
+        let mut args = vec!["uninstall", "--formula", &validated_formula];
         
         if force {
             args.push("--force");
@@ -344,7 +407,10 @@ impl BrewClient {
 
     /// Uninstall a cask
     pub fn uninstall_cask(&self, cask: &str, force: bool) -> Result<()> {
-        let mut args = vec!["uninstall", "--cask", cask];
+        // Validate cask name
+        let validated_cask = self.validate_package_name(cask)?;
+        
+        let mut args = vec!["uninstall", "--cask", &validated_cask];
         
         if force {
             args.push("--force");
@@ -353,7 +419,6 @@ impl BrewClient {
         self.execute_brew_command(&args)?;
         Ok(())
     }
-
 
     /// Get a list of all packages installed as dependencies
     pub fn get_dependency_packages(&self) -> Result<Vec<String>> {
@@ -371,5 +436,24 @@ impl BrewClient {
         
         self.execute_brew_command(&args)?;
         Ok(())
+    }
+    
+    /// Search for packages
+    pub fn search(&self, query: &str, formula_only: bool, cask_only: bool) -> Result<Vec<String>> {
+        // Validate search query
+        let validated_query = self.validate_search_query(query)?;
+        
+        let mut args = vec!["search"];
+        
+        if formula_only {
+            args.push("--formula");
+        } else if cask_only {
+            args.push("--cask");
+        }
+        
+        args.push(&validated_query);
+        
+        let output = self.execute_brew_command(&args)?;
+        Ok(self.parse_list_output(output))
     }
 }
