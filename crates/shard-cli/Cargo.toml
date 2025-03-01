@@ -1,0 +1,12 @@
+[package]
+name = "shard-cli"
+version = "0.1.0"
+edition = "2024"
+authors = ["Alexander Knott <alexander.knott@posteo.de>"]
+description = "CLI for Shard package management"
+
+[dependencies]
+sapphire-core = { path = "../sapphire-core" }
+anyhow = "1.0.96"
+clap = { version = "4.5.31", features = ["derive"] }
+tracing = "0.1.41"

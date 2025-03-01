@@ -1,10 +1,5 @@
-mod cli;
-mod core;
-mod sapphire;
-mod shard;
-mod fragment;
-mod utils;
-
+// This is a thin wrapper around the sapphire-cli functionality
 fn main() -> anyhow::Result<()> {
-    cli::run()
+    // Use the sapphire-core crate's functionality
+    sapphire_core::cli::run()
 }

@@ -5,25 +5,93 @@ edition = "2024"
 authors = ["Alexander Knott <alexander.knott@posteo.de>"]
 description = "A declarative system management suite for macOS"
 
+[workspace]
+members = [
+    "crates/sapphire-cli",
+    "crates/shard-cli",
+    "crates/fragment-cli",
+    "crates/sapphire-core",
+]
+
 [dependencies]
-anyhow = "1.0.96"
-assert_cmd = "2.0.16"
-assert_fs = "1.1.2"
-chrono = { version = "0.4.35", features = ["serde"] }
-clap = { version = "4.5.31", features = ["derive"] }
-console = "0.15.10"
-dialoguer = "0.11.0"
-directories = "6.0.0"
-indicatif = "0.17.11"
-lazy_static = "1.4.0"
-predicates = "3.1.3"
-regex = "1.10.4"
-serde = { version = "1.0.218", features = ["derive"] }
-serde_yaml = "0.9.34"
-shellexpand = "3.1.0"
-tempfile = "3.17.1"
-thiserror = "2.0.11"
-toml = "0.8.20"
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-dirs = "5.0.1"
+sapphire-core = { path = "crates/sapphire-core" }
+sapphire-cli = { path = "crates/sapphire-cli" }
+
+[[bin]]
+name = "sapphire"
+path = "src/main.rs"
+
+[[bin]]
+name = "shard"
+path = "crates/shard-cli/src/main.rs"
+
+[[bin]]
+name = "fragment"
+path = "crates/fragment-cli/src/main.rs"
+
+[dependencies.anyhow]
+version = "1.0.96"
+
+[dependencies.assert_cmd]
+version = "2.0.16"
+
+[dependencies.assert_fs]
+version = "1.1.2"
+
+[dependencies.chrono]
+version = "0.4.35"
+features = ["serde"]
+
+[dependencies.clap]
+version = "4.5.31"
+features = ["derive"]
+
+[dependencies.console]
+version = "0.15.10"
+
+[dependencies.dialoguer]
+version = "0.11.0"
+
+[dependencies.directories]
+version = "6.0.0"
+
+[dependencies.indicatif]
+version = "0.17.11"
+
+[dependencies.lazy_static]
+version = "1.4.0"
+
+[dependencies.predicates]
+version = "3.1.3"
+
+[dependencies.regex]
+version = "1.10.4"
+
+[dependencies.serde]
+version = "1.0.218"
+features = ["derive"]
+
+[dependencies.serde_yaml]
+version = "0.9.34"
+
+[dependencies.shellexpand]
+version = "3.1.0"
+
+[dependencies.tempfile]
+version = "3.17.1"
+
+[dependencies.thiserror]
+version = "2.0.11"
+
+[dependencies.toml]
+version = "0.8.20"
+
+[dependencies.tracing]
+version = "0.1.41"
+
+[dependencies.tracing-subscriber]
+version = "0.3.19"
+features = ["env-filter"]
+
+[dependencies.dirs]
+version = "5.0.1"
