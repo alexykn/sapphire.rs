@@ -5,9 +5,9 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     // Valid Homebrew package/formula/cask name regex
-    // Allows alphanumeric characters, dashes, underscores, dots, and pluses
+    // Allows alphanumeric characters, dashes, underscores, dots, plus signs, and at signs (for versioned packages like openssl@3)
     // More restrictive than what Homebrew technically allows, but catches most command injection attempts
-    static ref PACKAGE_NAME_REGEX: Regex = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_\-\.+]*$").unwrap();
+    static ref PACKAGE_NAME_REGEX: Regex = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_\-\.+@]*$").unwrap();
     
     // Valid Homebrew tap name regex (e.g., "user/repo" or "homebrew/core")
     static ref TAP_NAME_REGEX: Regex = Regex::new(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+$").unwrap();
@@ -23,7 +23,7 @@ pub fn validate_package_name(name: &str) -> Result<&str> {
     }
     
     if !PACKAGE_NAME_REGEX.is_match(name) {
-        bail!("Invalid package name format: '{}'. Names must contain only letters, numbers, dots, dashes, underscores, and plus signs, and must start with a letter or number.", name);
+        bail!("Invalid package name format: '{}'. Names must contain only letters, numbers, dots, dashes, underscores, plus signs, and at signs (@), and must start with a letter or number.", name);
     }
     
     Ok(name)
