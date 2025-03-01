@@ -1,0 +1,68 @@
+# User packages shard
+# This is an example of the new compact TOML format
+
+[metadata]
+description = "User packages for development and daily usage"
+protected = false
+version = "0.1.0"
+
+# Taps (package repositories)
+taps = [
+    { name = "homebrew/cask-fonts" },
+    { name = "homebrew/cask-versions" }
+]
+
+# Simple list of formulas (CLI tools)
+formulae = [
+    "fish",
+    "neovim",
+    "git",
+    "ripgrep",
+    "fd",
+    "exa",
+    "bat",
+    "htop",
+    "jq",
+    "fzf",
+    "tmux",
+    "wget",
+    "curl:latest",   # explicit version example
+    "node",
+    "python"
+]
+
+# Simple list of casks (GUI apps)
+brews = [
+    "rectangle",
+    "visual-studio-code",
+    "firefox",
+    "google-chrome",
+    "iterm2",
+    "spotify",
+    "discord",
+    "slack",
+    "docker",
+    "font-fira-code"
+]
+
+# These detailed formats are still supported for special cases
+# - Options that need custom flags
+# - Absent state for packages to remove
+# - Other special cases
+[[formulas]]
+name = "gcc"
+options = ["-v", "--with-all-languages"]
+state = "latest"
+
+[[casks]]
+name = "firefox-developer-edition"
+state = "latest"
+
+[[casks]]
+name = "java"
+version = "17"
+
+# Example of packages marked for removal
+[[formulas]]
+name = "old-package"
+state = "absent" 
