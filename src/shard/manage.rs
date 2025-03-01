@@ -4,14 +4,13 @@ use console::style;
 use dialoguer::Confirm;
 use shellexpand;
 use std::fs;
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Write};
+use std::path::PathBuf;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fmt;
 use std::error::Error as StdError;
 use crate::shard::manifest::Manifest;
-use chrono;
 
 /// Custom error type for shard management operations
 #[derive(Debug)]

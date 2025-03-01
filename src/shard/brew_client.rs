@@ -3,7 +3,7 @@ use std::process::{Command, Child, Stdio};
 use std::fmt::Write;
 use std::time::{Duration, Instant};
 use std::thread;
-use std::io::{self, Read};
+use std::io::{Read};
 use crate::utils::validation;
 
 /// Homebrew client for interacting with brew CLI
