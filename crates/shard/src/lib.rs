@@ -13,7 +13,8 @@ pub mod cli;
 // Re-export error handling and logging
 pub use utils::{
     ShardError, ShardResult, ResultExt,
-    init_logging, log_success, log_warning, log_error, log_step
+    log_success, log_warning, log_error, log_step,
+    Logger, LogLevel
 };
 
 // Re-export common types and functions for convenience

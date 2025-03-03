@@ -4,7 +4,7 @@ use console::style;
 use std::path::Path;
 use std::process::Command;
 use shellexpand;
-use crate::utils::helpers as fs_utils;
+use crate::utils::filesystem as fs_utils;
 use crate::brew::validate as validation;
 use crate::core::manifest::{Manifest, Formula, Cask, PackageState};
 use crate::shard::manager as manage;

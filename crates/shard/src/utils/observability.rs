@@ -108,38 +108,88 @@ where
 // Logging
 //-------------------------------------------------------------------------------
 
-/// Initialize the logging subsystem
-pub fn init_logging(verbosity: Option<u8>) {
-    // Only initialize once
-    INIT_LOGGER.call_once(|| {
-        // Determine log level based on verbosity
-        let log_level = match verbosity {
-            Some(0) => Level::ERROR,
-            Some(1) => Level::WARN,
-            Some(2) => Level::INFO,
-            Some(3) => Level::DEBUG,
-            Some(_) => Level::TRACE,
-            None => Level::INFO,
-        };
-        
-        // Create a custom filter that sets the default level
-        let filter = EnvFilter::from_default_env()
-            .add_directive(format!("shard={}", log_level).parse().unwrap());
-        
-        // Initialize the tracing subscriber with the custom filter
-        let subscriber = FmtSubscriber::builder()
-            .with_env_filter(filter)
-            .with_target(false)
-            .with_ansi(true)
-            .finish();
-        
-        // Set the global default subscriber
-        if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
-            eprintln!("Warning: Could not set global default tracing subscriber: {}", e);
-        } else {
-            debug!("Logging initialized at level: {}", log_level);
+/// LogLevel enum for type-safe log level selection
+#[derive(Debug, Clone, Copy)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    /// Convert to tracing Level
+    fn to_tracing_level(&self) -> Level {
+        match self {
+            LogLevel::Error => Level::ERROR,
+            LogLevel::Warn => Level::WARN,
+            LogLevel::Info => Level::INFO,
+            LogLevel::Debug => Level::DEBUG,
+            LogLevel::Trace => Level::TRACE,
         }
-    });
+    }
+    
+    /// Create from verbosity number
+    pub fn from_verbosity(verbosity: u8) -> Self {
+        match verbosity {
+            0 => LogLevel::Error,
+            1 => LogLevel::Warn,
+            2 => LogLevel::Info,
+            3 => LogLevel::Debug,
+            _ => LogLevel::Trace,
+        }
+    }
+}
+
+/// Logger struct for managing logging initialization
+pub struct Logger;
+
+impl Logger {
+    /// Initialize the logging subsystem with a specific LogLevel
+    pub fn init(level: LogLevel) {
+        // Only initialize once
+        INIT_LOGGER.call_once(|| {
+            let log_level = level.to_tracing_level();
+            
+            // Create a custom filter that sets the default level
+            let filter = EnvFilter::from_default_env()
+                .add_directive(format!("shard={}", log_level).parse().unwrap());
+            
+            // Initialize the tracing subscriber with the custom filter
+            let subscriber = FmtSubscriber::builder()
+                .with_env_filter(filter)
+                .with_target(false)
+                .with_ansi(true)
+                .finish();
+            
+            // Set the global default subscriber
+            if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+                eprintln!("Warning: Could not set global default tracing subscriber: {}", e);
+            } else {
+                debug!("Logging initialized at level: {}", log_level);
+            }
+        });
+    }
+    
+    /// Initialize with default level (Info)
+    pub fn init_default() {
+        Self::init(LogLevel::Info)
+    }
+    
+    /// Initialize with a specific verbosity level (0-4+)
+    pub fn init_with_verbosity(verbosity: u8) {
+        Self::init(LogLevel::from_verbosity(verbosity))
+    }
+}
+
+/// Legacy function for backward compatibility
+#[deprecated(since = "0.2.0", note = "Use Logger::init or Logger::init_with_verbosity instead")]
+pub fn init_logging(verbosity: Option<u8>) {
+    match verbosity {
+        Some(v) => Logger::init_with_verbosity(v),
+        None => Logger::init_default(),
+    }
 }
 
 /// Log a success message

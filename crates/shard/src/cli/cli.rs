@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
-use crate::utils::{ShardResult, init_logging};
+use crate::utils::ShardResult;
+use crate::utils::observability::{Logger, LogLevel};
 
 use crate::{
     brew::search,
@@ -149,8 +150,11 @@ pub fn run() -> ShardResult<()> {
     let cli = Cli::parse();
     
     // Set verbose level if specified via CLI
-    let verbose_level = if cli.verbose { Some(3) } else { None };
-    init_logging(verbose_level);
+    if cli.verbose {
+        Logger::init(LogLevel::Debug);
+    } else {
+        Logger::init_default();
+    }
     
     match cli.command {
         Commands::Apply { shard, dry_run, skip_cleanup } => {
