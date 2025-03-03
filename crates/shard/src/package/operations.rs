@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 use shellexpand;
 use sapphire_core::utils::file_system as fs_utils;
-use crate::utils::validate as validation;
+use crate::brew::validate as validation;
 use crate::core::manifest::{Manifest, Formula, Cask, PackageState};
 use crate::shard::manager as manage;
 use crate::shard::apply;

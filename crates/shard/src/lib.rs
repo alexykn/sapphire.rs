@@ -5,7 +5,7 @@ pub mod core;
 pub mod package;
 pub mod brew;
 pub mod shard;
-pub mod utils;
+//pub mod utils;
 
 // CLI handling
 pub mod cli;

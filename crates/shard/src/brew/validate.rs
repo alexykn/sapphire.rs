@@ -1,3 +1,16 @@
+//! Input validation utilities for Homebrew operations.
+//!
+//! This module provides functions to validate user inputs for security,
+//! particularly to prevent command injection vulnerabilities. It defines
+//! regular expressions that restrict inputs to safe patterns and provides
+//! validation functions used throughout the Homebrew module.
+//!
+//! # Security
+//!
+//! All user-provided inputs (package names, tap names, options, etc.) must be
+//! validated using the appropriate function from this module before being used
+//! in command execution to prevent potential command injection attacks.
+
 /// Utilities for validating user input for security
 use anyhow::{bail, Result};
 use regex::Regex;
