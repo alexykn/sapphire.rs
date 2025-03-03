@@ -6,6 +6,10 @@ use thiserror::Error;
 use tracing::{debug, error, info, trace, warn, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 use console::style;
+use std::sync::Once;
+
+// Static to ensure we only initialize logging once
+static INIT_LOGGER: Once = Once::new();
 
 //-------------------------------------------------------------------------------
 // Error Handling
@@ -106,32 +110,36 @@ where
 
 /// Initialize the logging subsystem
 pub fn init_logging(verbosity: Option<u8>) {
-    // Determine log level based on verbosity
-    let log_level = match verbosity {
-        Some(0) => Level::ERROR,
-        Some(1) => Level::WARN,
-        Some(2) => Level::INFO,
-        Some(3) => Level::DEBUG,
-        Some(_) => Level::TRACE,
-        None => Level::INFO,
-    };
-    
-    // Create a custom filter that sets the default level
-    let filter = EnvFilter::from_default_env()
-        .add_directive(format!("shard={}", log_level).parse().unwrap());
-    
-    // Initialize the tracing subscriber with the custom filter
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_ansi(true)
-        .finish();
-    
-    // Set the global default subscriber
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set global default tracing subscriber");
-    
-    debug!("Logging initialized at level: {}", log_level);
+    // Only initialize once
+    INIT_LOGGER.call_once(|| {
+        // Determine log level based on verbosity
+        let log_level = match verbosity {
+            Some(0) => Level::ERROR,
+            Some(1) => Level::WARN,
+            Some(2) => Level::INFO,
+            Some(3) => Level::DEBUG,
+            Some(_) => Level::TRACE,
+            None => Level::INFO,
+        };
+        
+        // Create a custom filter that sets the default level
+        let filter = EnvFilter::from_default_env()
+            .add_directive(format!("shard={}", log_level).parse().unwrap());
+        
+        // Initialize the tracing subscriber with the custom filter
+        let subscriber = FmtSubscriber::builder()
+            .with_env_filter(filter)
+            .with_target(false)
+            .with_ansi(true)
+            .finish();
+        
+        // Set the global default subscriber
+        if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+            eprintln!("Warning: Could not set global default tracing subscriber: {}", e);
+        } else {
+            debug!("Logging initialized at level: {}", log_level);
+        }
+    });
 }
 
 /// Log a success message

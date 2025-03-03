@@ -3,23 +3,32 @@ use clap::{Parser, Subcommand};
 use tracing::{Level, debug};
 use tracing_subscriber::{fmt, EnvFilter};
 use crate::setup;
+use std::sync::Once;
+
+// Static to ensure we only initialize logging once
+static INIT_LOGGER: Once = Once::new();
 
 // Initialize logging with the specified verbosity level
 fn init_logging(verbose: bool) {
-    let level = if verbose { Level::DEBUG } else { Level::INFO };
-    
-    // Create a custom filter
-    let filter = EnvFilter::from_default_env()
-        .add_directive(format!("sapphire={}", level).parse().unwrap());
-    
-    // Initialize the tracing subscriber
-    fmt::Subscriber::builder()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_ansi(true)
-        .init();
-    
-    debug!("Logging initialized at level: {}", level);
+    // Only initialize once
+    INIT_LOGGER.call_once(|| {
+        let level = if verbose { Level::DEBUG } else { Level::INFO };
+        
+        // Create a custom filter
+        let filter = EnvFilter::from_default_env()
+            .add_directive(format!("sapphire={}", level).parse().unwrap());
+        
+        // Initialize the tracing subscriber
+        if let Err(e) = fmt::Subscriber::builder()
+            .with_env_filter(filter)
+            .with_target(false)
+            .with_ansi(true)
+            .try_init() {
+            eprintln!("Warning: Could not initialize logging: {}", e);
+        } else {
+            debug!("Logging initialized at level: {}", level);
+        }
+    });
 }
 
 #[derive(Debug, Parser)]
