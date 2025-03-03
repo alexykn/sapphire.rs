@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
-use console::style;
 use crate::parser::Fragment;
 use sapphire_core::utils::file_system as fs_utils;
 

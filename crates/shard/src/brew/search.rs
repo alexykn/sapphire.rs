@@ -2,12 +2,6 @@ use anyhow::{Context, Result};
 use std::process::Command;
 use console::style;
 
-/// Search results structure
-struct SearchResults {
-    count: usize,
-    error: Option<String>,
-}
-
 /// Search for packages
 pub fn search(query: &str, search_type: &str, deep: bool) -> Result<()> {
     let query = query.to_lowercase();

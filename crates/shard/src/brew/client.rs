@@ -1,10 +1,9 @@
-use anyhow::{Result, Context, anyhow};
+use anyhow::{Result, Context};
 use std::process::{Command, Child, Stdio};
 use std::fmt::Write;
 use std::time::{Duration, Instant};
 use std::thread;
-use std::io::{Read, BufReader, BufRead};
-use std::sync::mpsc;
+use std::io::Read;
 use crate::utils::validate as validation;
 
 /// Homebrew client for interacting with brew CLI
@@ -102,7 +101,7 @@ impl BrewClient {
     }
     
     /// Process and optionally log command output
-    fn process_output(&self, output: &std::process::Output, context: impl std::fmt::Debug) -> bool {
+    fn process_output(&self, output: &std::process::Output, _context: impl std::fmt::Debug) -> bool {
         if self.debug {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
