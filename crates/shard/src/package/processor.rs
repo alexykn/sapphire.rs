@@ -4,7 +4,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::core::manifest::{PackageState, Formula, Cask};
 use crate::brew::client::BrewClient;
 use std::process::Command;
-use std::collections::HashSet;
 
 /// Represents the type of package being managed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,7 +259,7 @@ pub fn add_tap(name: &str) -> Result<()> {
     }
 }
 
-/// Helper function to run cleanup
+/// Run Homebrew cleanup
 pub fn run_cleanup() -> Result<()> {
     println!("Running final cleanup...");
     match get_brew_client().cleanup(true) {
@@ -330,19 +329,15 @@ pub fn get_all_main_packages() -> Result<(Vec<String>, Vec<String>)> {
         .with_context(|| "Failed to get installed casks for main package listing")?;
     
     // Get dependency packages
-    let dependency_packages = get_dependency_packages()
-        .with_context(|| "Failed to get dependency packages for main package listing")?;
+    let deps = get_dependency_packages()
+        .with_context(|| "Failed to get dependency packages")?;
     
-    // Filter out dependencies to get main packages
+    // Filter out dependencies from formulae
     let main_formulae: Vec<String> = all_formulae.into_iter()
-        .filter(|pkg| !dependency_packages.contains(pkg))
+        .filter(|f| !deps.contains(f))
         .collect();
     
-    let main_casks: Vec<String> = all_casks.into_iter()
-        .filter(|pkg| !dependency_packages.contains(pkg))
-        .collect();
-    
-    Ok((main_formulae, main_casks))
+    Ok((main_formulae, all_casks))
 }
 
 /// Generic function to perform batch operations on packages
@@ -704,4 +699,98 @@ impl PackageProcessor {
         
         Ok(())
     }
-} 
+
+    /// Create a new processor for formulae
+    pub fn for_formulae(suppress_messages: bool) -> Result<Self> {
+        Ok(Self {
+            package_type: PackageType::Formula,
+            installed_packages: get_installed_formulae()?,
+            suppress_messages,
+        })
+    }
+    
+    /// Create a new processor for casks
+    pub fn for_casks(suppress_messages: bool) -> Result<Self> {
+        Ok(Self {
+            package_type: PackageType::Cask,
+            installed_packages: get_installed_casks()?,
+            suppress_messages,
+        })
+    }
+    
+    /// Get a list of all currently installed formulae
+    pub fn get_installed_formulae() -> Result<Vec<String>> {
+        get_installed_formulae()
+    }
+
+    /// Get a list of all currently installed casks
+    pub fn get_installed_casks() -> Result<Vec<String>> {
+        get_installed_casks()
+    }
+
+    /// Get a list of all currently installed taps
+    pub fn get_installed_taps() -> Result<Vec<String>> {
+        get_installed_taps()
+    }
+
+    /// Get a list of all packages installed as dependencies
+    pub fn get_dependency_packages() -> Result<Vec<String>> {
+        get_dependency_packages()
+    }
+    
+    /// Get a list of explicitly installed packages (both formulae and casks, excluding dependencies)
+    pub fn get_all_main_packages() -> Result<(Vec<String>, Vec<String>)> {
+        get_all_main_packages()
+    }
+    
+    /// Uninstall a package using this processor's package type
+    pub fn uninstall(&self, name: &str, force: bool) -> Result<()> {
+        uninstall_package(self.package_type, name, force)
+    }
+    
+    /// Uninstall a package
+    pub fn uninstall_package(package_type: PackageType, name: &str, force: bool) -> Result<()> {
+        uninstall_package(package_type, name, force)
+    }
+}
+
+/// Utility struct for Homebrew operations
+pub struct BrewUtils;
+
+impl BrewUtils {
+    /// Run Homebrew cleanup
+    pub fn run_cleanup() -> Result<()> {
+        println!("Running final cleanup...");
+        match get_brew_client().cleanup(true) {
+            Ok(_) => {
+                println!("{} Final cleanup completed", style("✓").bold().green());
+                Ok(())
+            },
+            Err(e) => {
+                eprintln!("Error cleaning up Homebrew packages: {}", e);
+                Err(e)
+            }
+        }
+    }
+    
+    /// Add a tap to Homebrew
+    pub fn add_tap(name: &str) -> Result<()> {
+        println!("Adding tap: {}", style(name).bold());
+        match get_brew_client().add_tap(name) {
+            Ok(_) => {
+                println!("Successfully added tap: {}", style(name).bold());
+                Ok(())
+            },
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("already tapped") {
+                    println!("Tap {} already exists, skipping", style(name).bold());
+                    Ok(())
+                } else {
+                    eprintln!("Error adding tap {}: {}", name, e);
+                    Err(e)
+                }
+            }
+        }
+    }
+}

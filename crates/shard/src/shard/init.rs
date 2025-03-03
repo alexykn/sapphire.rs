@@ -1,12 +1,10 @@
 use anyhow::{Result, Context};
 use console::style;
 use std::path::PathBuf;
-use std::fs;
 use sapphire_core::utils::file_system as fs_utils;
 use shellexpand;
 use crate::core::manifest::Manifest;
 use std::env;
-use std::path::Path;
 
 const SHARDS_DIR: &str = "~/.sapphire/shards";
 const DISABLED_DIR: &str = "~/.sapphire/disabled";

@@ -4,13 +4,12 @@ use console::style;
 use dialoguer::Confirm;
 use shellexpand;
 use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self};
+use std::path::PathBuf;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fmt;
 use std::error::Error as StdError;
-use chrono::Utc;
 use crate::core::manifest::Manifest;
 
 /// Custom error type for shard management operations
@@ -684,11 +683,6 @@ pub fn disable_shard(name: &str) -> Result<()> {
 pub fn enable_shard(name: &str) -> Result<()> {
     let manager = ShardManager::new()?;
     manager.enable_shard(name)
-}
-
-/// Check if a shard name is valid
-fn is_valid_shard_name(name: &str) -> bool {
-    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Check if a shard is protected

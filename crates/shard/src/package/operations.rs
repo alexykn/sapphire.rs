@@ -1,11 +1,9 @@
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use console::style;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use shellexpand;
-use std::fs;
-use std::collections::HashMap;
 use sapphire_core::utils::file_system as fs_utils;
 use crate::utils::validate as validation;
 use crate::core::manifest::{Manifest, Formula, Cask, PackageState};

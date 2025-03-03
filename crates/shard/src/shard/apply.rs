@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
 use std::io::Write;
 use console::style;
@@ -7,13 +7,9 @@ use shellexpand;
 use crate::core::manifest::{Manifest, PackageState};
 use sapphire_core::utils::file_system as fs_utils;
 use crate::package::processor::{
-    PackageType, PackageOperation, PackageProcessResult, PackageProcessor,
-    batch_install_formulae, batch_install_casks, batch_upgrade_formulae, batch_upgrade_casks,
+    PackageType, PackageOperation, PackageProcessor,
     get_installed_formulae, get_installed_casks, get_installed_taps, get_dependency_packages,
-    add_tap, run_cleanup, uninstall_package, get_brew_client, 
-    is_outdated_formula, is_outdated_cask,
-    install_formula_with_options, upgrade_formula_with_options,
-    install_cask_with_options, upgrade_cask_with_options,
+    add_tap, run_cleanup, uninstall_package,
     get_all_main_packages
 };
 
@@ -68,8 +64,8 @@ fn handle_cleanup(skip_cleanup: bool, dry_run: bool) -> Result<()> {
         if dry_run {
             println!("Would run cleanup");
         } else {
-            println!("Running cleanup");
-            get_brew_client().cleanup(false)?;
+            // Use the run_cleanup function instead of direct client call
+            run_cleanup()?;
         }
     }
     
@@ -115,24 +111,75 @@ fn process_formulas(
         return Ok(());
     }
 
-    // Collect formula names from both sources and deduplicate them
-    let mut formula_names: Vec<String> = manifest.formulas.iter()
-        .map(|f| f.name.clone())
-        .collect();
+    // Create a vector to hold all formula information
+    let mut formula_info = Vec::new();
     
-    // Add names from formulae only if they're not already in the list
-    for formula in &manifest.formulae {
-        if !formula_names.contains(formula) {
-            formula_names.push(formula.clone());
+    // Add detailed formulas first
+    for formula in &manifest.formulas {
+        if formula.state != PackageState::Absent {
+            formula_info.push((
+                formula.name.clone(),
+                formula.state.clone(),
+                formula.options.clone()
+            ));
         }
     }
     
-    if formula_names.is_empty() {
+    // Add simplified formula list (formulae)
+    for formula_name in &manifest.formulae {
+        // Only add if not already in formula_info from the detailed list
+        if !formula_info.iter().any(|(name, _, _)| name == formula_name) {
+            formula_info.push((
+                formula_name.clone(),
+                PackageState::Latest,  // Simplified list implies Latest state
+                Vec::new()  // No options for simplified list
+            ));
+        }
+    }
+    
+    if formula_info.is_empty() {
+        // No formulas to install or upgrade
+        // Check for absent formulas to uninstall
+        let absent_formulas: Vec<String> = manifest.formulas.iter()
+            .filter(|f| f.state == PackageState::Absent)
+            .map(|f| f.name.clone())
+            .collect();
+        
+        if absent_formulas.is_empty() {
+            return Ok(());
+        }
+        
+        if !options.quiet_mode {
+            println!("Processing {} formulae for removal...", absent_formulas.len());
+        }
+        
+        if !is_system_manifest || options.allow_system_package_removal {
+            let installed_packages = get_installed_formulae()?;
+            
+            for formula_name in &absent_formulas {
+                if installed_packages.contains(formula_name) {
+                    if dry_run {
+                        println!("Would uninstall formula: {}", style(formula_name).bold());
+                    } else {
+                        println!("{} formula: {}", 
+                            PackageOperation::Uninstall.as_str(), 
+                            style(formula_name).bold());
+                        uninstall_package(PackageType::Formula, formula_name, true)?;
+                    }
+                }
+            }
+        } else {
+            println!("{} {} {}",
+                style("Skipping uninstall of").yellow(),
+                absent_formulas.len(),
+                style("formulas from system manifest").yellow());
+        }
+        
         return Ok(());
     }
-
+    
     if !options.quiet_mode {
-        println!("Processing {} formulae...", formula_names.len());
+        println!("Processing {} formulae...", formula_info.len());
     }
     
     // Create formula processor
@@ -142,76 +189,37 @@ fn process_formulas(
         suppress_messages: options.quiet_mode,
     };
 
-    // Process detailed formulas first
-    for formula in &manifest.formulas {
-        if formula.state == PackageState::Absent {
-            continue; // Handle absent formulas separately
+    // Create SimplePackage objects for processing
+    struct SimplePackage {
+        name: String,
+        state: PackageState,
+        options: Vec<String>,
+    }
+    
+    impl crate::package::processor::PackageInfo for SimplePackage {
+        fn state(&self) -> PackageState {
+            self.state.clone()
         }
-
-        let name = &formula.name;
-        let options_list = &formula.options;
-        let is_installed = formula_processor.installed_packages.contains(name);
-        let is_outdated = is_outdated_formula(name)?;
         
-        if is_installed {
-            if is_outdated || formula.state == PackageState::Latest {
-                if dry_run {
-                    println!("Would upgrade formula{}: {}", 
-                        if !options_list.is_empty() { " with options" } else { "" },
-                        style(name).bold());
-                } else {
-                    upgrade_formula_with_options(name, options_list, options.quiet_mode)?;
-                }
-            } 
-        } else {
-            if dry_run {
-                println!("Would install formula{}: {}", 
-                    if !options_list.is_empty() { " with options" } else { "" },
-                    style(name).bold());
-            } else {
-                println!("{} Installing formula: {}", 
-                    style("→").bold().green(), 
-                    style(name).bold());
-                install_formula_with_options(name, options_list, options.quiet_mode)?;
-            }
+        fn options(&self) -> &[String] {
+            &self.options
+        }
+        
+        fn name(&self) -> &str {
+            &self.name
         }
     }
     
-    // Process simplified formula list (formulae), but only if they're not in the formulas list
-    let formula_names_set: std::collections::HashSet<String> = manifest.formulas.iter()
-        .map(|f| f.name.clone())
+    let formula_packages: Vec<SimplePackage> = formula_info
+        .into_iter()
+        .map(|(name, state, options)| SimplePackage { name, state, options })
         .collect();
-    
-    for formula_name in &manifest.formulae {
-        // Skip if this formula was already processed from the detailed list
-        if formula_names_set.contains(formula_name) {
-            continue;
-        }
         
-        let is_installed = formula_processor.installed_packages.contains(formula_name);
-        let is_outdated = is_outdated_formula(formula_name)?;
-        
-        if is_installed {
-            if is_outdated {
-                if dry_run {
-                    println!("Would upgrade formula: {}", style(formula_name).bold());
-                } else {
-                    upgrade_formula_with_options(formula_name, &[], options.quiet_mode)?;
-                }
-            } 
-        } else {
-            if dry_run {
-                println!("Would install formula: {}", style(formula_name).bold());
-            } else {
-                println!("{} Installing formula: {}", 
-                    style("→").bold().green(), 
-                    style(formula_name).bold());
-                install_formula_with_options(formula_name, &[], options.quiet_mode)?;
-            }
-        }
-    }
+    // Process packages with the processor
+    let process_result = formula_processor.process_packages(&formula_packages)?;
+    formula_processor.execute_operations(&process_result, dry_run)?;
     
-    // Process "absent" formulas
+    // Process "absent" formulas separately
     let absent_formulas: Vec<String> = manifest.formulas.iter()
         .filter(|f| f.state == PackageState::Absent)
         .map(|f| f.name.clone())
@@ -227,7 +235,7 @@ fn process_formulas(
                         println!("{} formula: {}", 
                             PackageOperation::Uninstall.as_str(), 
                             style(formula_name).bold());
-                        get_brew_client().uninstall_formula(formula_name, false)?;
+                        uninstall_package(PackageType::Formula, formula_name, true)?;
                     }
                 }
             }
@@ -254,24 +262,75 @@ fn process_casks(
         return Ok(());
     }
 
-    // Collect cask names from both sources and deduplicate them
-    let mut cask_names: Vec<String> = manifest.casks.iter()
-        .map(|c| c.name.clone())
-        .collect();
+    // Create a vector to hold all cask information
+    let mut cask_info = Vec::new();
     
-    // Add names from brews only if they're not already in the list
-    for brew in &manifest.brews {
-        if !cask_names.contains(brew) {
-            cask_names.push(brew.clone());
+    // Add detailed casks first
+    for cask in &manifest.casks {
+        if cask.state != PackageState::Absent {
+            cask_info.push((
+                cask.name.clone(),
+                cask.state.clone(),
+                cask.options.clone()
+            ));
         }
     }
     
-    if cask_names.is_empty() {
+    // Add simplified cask list (brews)
+    for cask_name in &manifest.brews {
+        // Only add if not already in cask_info from the detailed list
+        if !cask_info.iter().any(|(name, _, _)| name == cask_name) {
+            cask_info.push((
+                cask_name.clone(),
+                PackageState::Latest,  // Simplified list implies Latest state
+                Vec::new()  // No options for simplified list
+            ));
+        }
+    }
+    
+    if cask_info.is_empty() {
+        // No casks to install or upgrade
+        // Check for absent casks to uninstall
+        let absent_casks: Vec<String> = manifest.casks.iter()
+            .filter(|c| c.state == PackageState::Absent)
+            .map(|c| c.name.clone())
+            .collect();
+        
+        if absent_casks.is_empty() {
+            return Ok(());
+        }
+        
+        if !options.quiet_mode {
+            println!("Processing {} casks for removal...", absent_casks.len());
+        }
+        
+        if !is_system_manifest || options.allow_system_package_removal {
+            let installed_packages = get_installed_casks()?;
+            
+            for cask_name in &absent_casks {
+                if installed_packages.contains(cask_name) {
+                    if dry_run {
+                        println!("Would uninstall cask: {}", style(cask_name).bold());
+                    } else {
+                        println!("{} cask: {}", 
+                            PackageOperation::Uninstall.as_str(), 
+                            style(cask_name).bold());
+                        uninstall_package(PackageType::Cask, cask_name, true)?;
+                    }
+                }
+            }
+        } else {
+            println!("{} {} {}",
+                style("Skipping uninstall of").yellow(),
+                absent_casks.len(),
+                style("casks from system manifest").yellow());
+        }
+        
         return Ok(());
     }
-
+    
     if !options.quiet_mode {
-        println!("Processing {} casks...", cask_names.len());
+        println!("Processing {} casks...", cask_info.len());
     }
     
     // Create cask processor
@@ -281,76 +340,37 @@ fn process_casks(
         suppress_messages: options.quiet_mode,
     };
 
-    // Process detailed casks first
-    for cask in &manifest.casks {
-        if cask.state == PackageState::Absent {
-            continue; // Handle absent casks separately
+    // Create SimplePackage objects for processing
+    struct SimplePackage {
+        name: String,
+        state: PackageState,
+        options: Vec<String>,
+    }
+    
+    impl crate::package::processor::PackageInfo for SimplePackage {
+        fn state(&self) -> PackageState {
+            self.state.clone()
         }
-
-        let name = &cask.name;
-        let options_list = &cask.options;
-        let is_installed = cask_processor.installed_packages.contains(name);
-        let is_outdated = is_outdated_cask(name)?;
         
-        if is_installed {
-            if is_outdated || cask.state == PackageState::Latest {
-                if dry_run {
-                    println!("Would upgrade cask{}: {}", 
-                        if !options_list.is_empty() { " with options" } else { "" },
-                        style(name).bold());
-                } else {
-                    upgrade_cask_with_options(name, options_list, options.quiet_mode)?;
-                }
-            } 
-        } else {
-            if dry_run {
-                println!("Would install cask{}: {}", 
-                    if !options_list.is_empty() { " with options" } else { "" },
-                    style(name).bold());
-            } else {
-                println!("{} Installing cask: {}", 
-                    style("→").bold().green(), 
-                    style(name).bold());
-                install_cask_with_options(name, options_list, options.quiet_mode)?;
-            }
+        fn options(&self) -> &[String] {
+            &self.options
+        }
+        
+        fn name(&self) -> &str {
+            &self.name
         }
     }
     
-    // Process simplified cask list (brews), but only if they're not in the casks list
-    let cask_names_set: std::collections::HashSet<String> = manifest.casks.iter()
-        .map(|c| c.name.clone())
+    let cask_packages: Vec<SimplePackage> = cask_info
+        .into_iter()
+        .map(|(name, state, options)| SimplePackage { name, state, options })
         .collect();
-    
-    for cask_name in &manifest.brews {
-        // Skip if this cask was already processed from the detailed list
-        if cask_names_set.contains(cask_name) {
-            continue;
-        }
         
-        let is_installed = cask_processor.installed_packages.contains(cask_name);
-        let is_outdated = is_outdated_cask(cask_name)?;
-        
-        if is_installed {
-            if is_outdated {
-                if dry_run {
-                    println!("Would upgrade cask: {}", style(cask_name).bold());
-                } else {
-                    upgrade_cask_with_options(cask_name, &[], options.quiet_mode)?;
-                }
-            } 
-        } else {
-            if dry_run {
-                println!("Would install cask: {}", style(cask_name).bold());
-            } else {
-                println!("{} Installing cask: {}", 
-                    style("→").bold().green(), 
-                    style(cask_name).bold());
-                install_cask_with_options(cask_name, &[], options.quiet_mode)?;
-            }
-        }
-    }
+    // Process packages with the processor
+    let process_result = cask_processor.process_packages(&cask_packages)?;
+    cask_processor.execute_operations(&process_result, dry_run)?;
     
-    // Process "absent" casks
+    // Process "absent" casks separately
     let absent_casks: Vec<String> = manifest.casks.iter()
         .filter(|c| c.state == PackageState::Absent)
         .map(|c| c.name.clone())
@@ -366,7 +386,7 @@ fn process_casks(
                         println!("{} cask: {}", 
                             PackageOperation::Uninstall.as_str(), 
                             style(cask_name).bold());
-                        get_brew_client().uninstall_cask(cask_name, false)?;
+                        uninstall_package(PackageType::Cask, cask_name, true)?;
                     }
                 }
             }
