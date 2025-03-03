@@ -1,6 +1,7 @@
-pub mod core;
-pub mod sapphire;
-pub mod shard;
-pub mod fragment;
+// Sapphire Core - shared components for all Sapphire tools
+
+pub mod logging;
 pub mod utils;
-pub mod cli; 
+
+// Re-export common traits and types
+pub use logging::error::{SapphireError, SapphireResult}; 

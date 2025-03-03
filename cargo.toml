@@ -1,5 +1,5 @@
 [package]
-name = "sapphire"
+name = "sapphire-suite"
 version = "0.1.0"
 edition = "2024"
 authors = ["Alexander Knott <alexander.knott@posteo.de>"]
@@ -7,30 +7,30 @@ description = "A declarative system management suite for macOS"
 
 [workspace]
 members = [
-    "crates/sapphire-cli",
-    "crates/shard-cli",
-    "crates/fragment-cli",
     "crates/sapphire-core",
+    "crates/sapphire",
+    "crates/shard",
+    "crates/fragment",
 ]
 
 [dependencies]
-sapphire-core = { path = "crates/sapphire-core" }
-sapphire-cli = { path = "crates/sapphire-cli" }
+sapphire = { path = "crates/sapphire" }
+shard = { path = "crates/shard" }
+fragment = { path = "crates/fragment" }
+anyhow = "1.0.96"
 
 [[bin]]
 name = "sapphire"
 path = "src/main.rs"
 
+# Additional binaries
 [[bin]]
 name = "shard"
-path = "crates/shard-cli/src/main.rs"
+path = "crates/shard/src/main.rs"
 
 [[bin]]
 name = "fragment"
-path = "crates/fragment-cli/src/main.rs"
-
-[dependencies.anyhow]
-version = "1.0.96"
+path = "crates/fragment/src/main.rs"
 
 [dependencies.assert_cmd]
 version = "2.0.16"
