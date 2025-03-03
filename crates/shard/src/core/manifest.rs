@@ -1,14 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 
 /// Package manifest for Shard
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Manifest {
-    #[serde(default)]
-    pub metadata: Metadata,
-    
     #[serde(default)]
     pub formulas: Vec<Formula>,
     
@@ -25,10 +21,13 @@ pub struct Manifest {
     /// Simplified cask list as strings  
     #[serde(default)]
     pub brews: Vec<String>,
+    
+    #[serde(default)]
+    pub metadata: Metadata,
 }
 
 /// Metadata for the manifest
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Metadata {
     /// Brief description of the shard
     #[serde(default)]
@@ -46,21 +45,18 @@ pub struct Metadata {
     #[serde(default)]
     pub allowed_users: Vec<String>,
     
-    /// Digital signature for verification (for future implementation)
-    #[serde(default)]
-    pub signature: Option<String>,
-    
-    /// Last modified timestamp
-    #[serde(default)]
-    pub last_modified: Option<DateTime<Utc>>,
-    
-    /// User who last modified the shard
-    #[serde(default)]
-    pub last_modified_by: Option<String>,
-    
     /// Protection level (0-3) with 0 being unprotected and 3 being system level
     #[serde(default)]
     pub protection_level: u8,
+}
+
+/// Package state (present, absent, latest) - kept for compatibility
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageState {
+    Present,
+    Absent,
+    Latest,
 }
 
 /// Homebrew formula
@@ -93,17 +89,8 @@ pub struct Cask {
     pub state: PackageState,
 }
 
-/// Package state (present, absent, latest)
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum PackageState {
-    Present,
-    Absent,
-    Latest,
-}
-
 /// Homebrew tap
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tap {
     pub name: String,
 }
@@ -125,9 +112,6 @@ impl Manifest {
                 protected: false,
                 version: "0.1.0".to_string(),
                 allowed_users: Vec::new(),
-                signature: None,
-                last_modified: Some(Utc::now()),
-                last_modified_by: std::env::var("USER").ok(),
                 protection_level: 0,
             },
             formulas: Vec::new(),
@@ -139,30 +123,9 @@ impl Manifest {
     }
     
     /// Check if a user is allowed to modify this manifest
-    pub fn can_modify(&self, username: &str) -> bool {
+    pub fn can_modify(&self, _username: &str) -> bool {
         // If not protected, anyone can modify
-        if !self.metadata.protected {
-            return true;
-        }
-        
-        // If protection_level is 3 (system level), only allowed users can modify
-        if self.metadata.protection_level >= 3 {
-            return self.metadata.allowed_users.contains(&username.to_string());
-        }
-        
-        // For protection levels 1-2, check allowed users
-        if !self.metadata.allowed_users.is_empty() {
-            return self.metadata.allowed_users.contains(&username.to_string());
-        }
-        
-        // Default to not allowing modification if protected
-        false
-    }
-    
-    /// Update last modified information
-    pub fn update_modification_info(&mut self) {
-        self.metadata.last_modified = Some(Utc::now());
-        self.metadata.last_modified_by = std::env::var("USER").ok();
+        !self.metadata.protected
     }
     
     /// Load a manifest from a file
@@ -188,6 +151,16 @@ impl Manifest {
                 }
                 if let Some(version) = metadata_table.get("version").and_then(|v| v.as_str()) {
                     manifest.metadata.version = version.to_string();
+                }
+                if let Some(allowed_users) = metadata_table.get("allowed_users").and_then(|v| v.as_array()) {
+                    for user in allowed_users {
+                        if let Some(user_str) = user.as_str() {
+                            manifest.metadata.allowed_users.push(user_str.to_string());
+                        }
+                    }
+                }
+                if let Some(protection_level) = metadata_table.get("protection_level").and_then(|v| v.as_integer()) {
+                    manifest.metadata.protection_level = protection_level as u8;
                 }
             }
         }
@@ -226,17 +199,11 @@ impl Manifest {
                                 }
                             }
                             
-                            let state = match formula_table.get("state").and_then(|v| v.as_str()) {
-                                Some("absent") => PackageState::Absent,
-                                Some("latest") => PackageState::Latest,
-                                _ => PackageState::Present,
-                            };
-                            
                             manifest.formulas.push(Formula {
                                 name: name.to_string(),
                                 version,
                                 options,
-                                state,
+                                state: default_state(),
                             });
                         }
                     }
@@ -264,17 +231,11 @@ impl Manifest {
                                 }
                             }
                             
-                            let state = match cask_table.get("state").and_then(|v| v.as_str()) {
-                                Some("absent") => PackageState::Absent,
-                                Some("latest") => PackageState::Latest,
-                                _ => PackageState::Present,
-                            };
-                            
                             manifest.casks.push(Cask {
                                 name: name.to_string(),
                                 version,
                                 options,
-                                state,
+                                state: default_state(),
                             });
                         }
                     }
@@ -296,14 +257,14 @@ impl Manifest {
                                 name: name.trim().to_string(),
                                 version: version.trim().to_string(),
                                 options: Vec::new(),
-                                state: PackageState::Present,
+                                state: default_state(),
                             });
                         } else {
                             manifest.formulas.push(Formula {
                                 name: formula_str.trim().to_string(),
                                 version: "latest".to_string(),
                                 options: Vec::new(),
-                                state: PackageState::Present,
+                                state: default_state(),
                             });
                         }
                     }
@@ -325,14 +286,14 @@ impl Manifest {
                                 name: name.trim().to_string(),
                                 version: version.trim().to_string(),
                                 options: Vec::new(),
-                                state: PackageState::Present,
+                                state: default_state(),
                             });
                         } else {
                             manifest.casks.push(Cask {
                                 name: brew_str.trim().to_string(),
                                 version: "latest".to_string(),
                                 options: Vec::new(),
-                                state: PackageState::Present,
+                                state: default_state(),
                             });
                         }
                     }
@@ -353,6 +314,8 @@ impl Manifest {
         metadata_table.insert("description".to_string(), toml::Value::String(self.metadata.description.clone()));
         metadata_table.insert("protected".to_string(), toml::Value::Boolean(self.metadata.protected));
         metadata_table.insert("version".to_string(), toml::Value::String(self.metadata.version.clone()));
+        metadata_table.insert("allowed_users".to_string(), toml::Value::Array(self.metadata.allowed_users.iter().map(|u| toml::Value::String(u.clone())).collect()));
+        metadata_table.insert("protection_level".to_string(), toml::Value::Integer(self.metadata.protection_level as i64));
         clean_manifest.insert("metadata".to_string(), toml::Value::Table(metadata_table));
         
         // Add taps as simple strings
@@ -370,14 +333,12 @@ impl Manifest {
         
         // Convert detailed formulas to simplified list
         for formula in &self.formulas {
-            if formula.state == PackageState::Present || formula.state == PackageState::Latest {
-                formula_names.insert(formula.name.clone());
-                
-                if formula.version == "latest" {
-                    formulae.push(toml::Value::String(formula.name.clone()));
-                } else {
-                    formulae.push(toml::Value::String(format!("{}:{}", formula.name, formula.version)));
-                }
+            formula_names.insert(formula.name.clone());
+            
+            if formula.version == "latest" {
+                formulae.push(toml::Value::String(formula.name.clone()));
+            } else {
+                formulae.push(toml::Value::String(format!("{}:{}", formula.name, formula.version)));
             }
         }
         
@@ -406,14 +367,12 @@ impl Manifest {
         
         // Convert detailed casks to simplified list
         for cask in &self.casks {
-            if cask.state == PackageState::Present || cask.state == PackageState::Latest {
-                brew_names.insert(cask.name.clone());
-                
-                if cask.version == "latest" {
-                    brews.push(toml::Value::String(cask.name.clone()));
-                } else {
-                    brews.push(toml::Value::String(format!("{}:{}", cask.name, cask.version)));
-                }
+            brew_names.insert(cask.name.clone());
+            
+            if cask.version == "latest" {
+                brews.push(toml::Value::String(cask.name.clone()));
+            } else {
+                brews.push(toml::Value::String(format!("{}:{}", cask.name, cask.version)));
             }
         }
         
@@ -446,40 +405,9 @@ impl Manifest {
         
         Ok(())
     }
-}
-
-impl Clone for Manifest {
-    fn clone(&self) -> Self {
-        Self {
-            metadata: self.metadata.clone(),
-            formulas: self.formulas.clone(),
-            casks: self.casks.clone(),
-            taps: self.taps.clone(),
-            formulae: Vec::new(), // Don't copy these as they'll be regenerated
-            brews: Vec::new(),    // Don't copy these as they'll be regenerated
-        }
-    }
-}
-
-impl Clone for Metadata {
-    fn clone(&self) -> Self {
-        Self {
-            description: self.description.clone(),
-            protected: self.protected,
-            version: self.version.clone(),
-            allowed_users: self.allowed_users.clone(),
-            signature: self.signature.clone(),
-            last_modified: self.last_modified.clone(),
-            last_modified_by: self.last_modified_by.clone(),
-            protection_level: self.protection_level,
-        }
-    }
-}
-
-impl Clone for Tap {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name.clone(),
-        }
+    
+    // Stub for backward compatibility - does nothing now
+    pub fn update_modification_info(&mut self) {
+        // Intentionally empty - no longer tracking modification info
     }
 }
