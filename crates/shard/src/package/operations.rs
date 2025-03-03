@@ -553,7 +553,6 @@ fn apply_manifest_after_removal(manifest: &Manifest, manifest_path: &str) -> Sha
     // Create custom options with quiet mode enabled
     let options = apply::ApplyOptions {
         allow_system_package_removal: true,
-        quiet_mode: true,
     };
     
     // Use the version with options to enable quiet mode

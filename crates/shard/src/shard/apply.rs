@@ -19,8 +19,6 @@ use crate::utils;
 pub struct ApplyOptions {
     /// Whether to allow removal of packages from the system manifest
     pub allow_system_package_removal: bool,
-    /// Whether to suppress redundant "already installed" messages
-    pub quiet_mode: bool,
 }
 
 /// Process taps defined in a manifest
@@ -48,9 +46,7 @@ fn process_taps(manifest: &Manifest, dry_run: bool) -> ShardResult<()> {
         .filter(|tap| !installed_taps.contains(&tap.name))
         .collect();
     
-    if taps_to_add.is_empty() {
-        println!("All required taps are already installed");
-    } else {
+    if !taps_to_add.is_empty() {
         for tap in taps_to_add {
             add_tap(&tap.name)?;
         }
@@ -150,9 +146,7 @@ fn process_formulas(
             return Ok(());
         }
         
-        if !options.quiet_mode {
-            println!("Processing {} formulae for removal...", absent_formulas.len());
-        }
+        println!("Processing {} formulae for removal...", absent_formulas.len());
         
         if !is_system_manifest || options.allow_system_package_removal {
             let installed_packages = get_installed_formulae()?;
@@ -179,15 +173,13 @@ fn process_formulas(
         return Ok(());
     }
     
-    if !options.quiet_mode {
-        println!("Processing {} formulae...", formula_info.len());
-    }
+    println!("Processing {} formulae...", formula_info.len());
     
     // Create formula processor
     let formula_processor = PackageProcessor {
         package_type: PackageType::Formula,
         installed_packages: get_installed_formulae()?,
-        suppress_messages: options.quiet_mode,
+        suppress_messages: true, // Always suppress "already installed" messages
     };
 
     // Create SimplePackage objects for processing
@@ -301,9 +293,7 @@ fn process_casks(
             return Ok(());
         }
         
-        if !options.quiet_mode {
-            println!("Processing {} casks for removal...", absent_casks.len());
-        }
+        println!("Processing {} casks for removal...", absent_casks.len());
         
         if !is_system_manifest || options.allow_system_package_removal {
             let installed_packages = get_installed_casks()?;
@@ -330,15 +320,13 @@ fn process_casks(
         return Ok(());
     }
     
-    if !options.quiet_mode {
-        println!("Processing {} casks...", cask_info.len());
-    }
+    println!("Processing {} casks...", cask_info.len());
     
     // Create cask processor
     let cask_processor = PackageProcessor {
         package_type: PackageType::Cask,
         installed_packages: get_installed_casks()?,
-        suppress_messages: options.quiet_mode,
+        suppress_messages: true, // Always suppress "already installed" messages
     };
 
     // Create SimplePackage objects for processing

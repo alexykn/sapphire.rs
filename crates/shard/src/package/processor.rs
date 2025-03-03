@@ -54,7 +54,6 @@ pub fn execute_brew_command<F, S>(
     package_name: &str, 
     has_options: bool,
     command: F,
-    suppress_already_installed_messages: bool
 ) -> ShardResult<()> 
 where
     F: FnOnce() -> ShardResult<()>,
@@ -91,19 +90,8 @@ where
         Err(e) => {
             let error_msg = e.to_string();
             if error_msg.contains("already installed") {
-                if !suppress_already_installed_messages {
-                    let status_msg = if operation == PackageOperation::Upgrade {
-                        "is already up-to-date"
-                    } else {
-                        "is already installed"
-                    };
-                    pb.finish_with_message(format!("{} {} {}",
-                        style(package_type).bold(),
-                        style(package_name).bold(),
-                        status_msg));
-                } else {
-                    pb.finish();
-                }
+                // Just finish the progress bar without any message for "already installed"
+                pb.finish();
                 Ok(())
             } else {
                 pb.finish_with_message(format!("{} Error {} {}: {}", 
@@ -123,7 +111,6 @@ pub fn package_operation_with_options(
     operation: PackageOperation, 
     name: &str, 
     options: &[String], 
-    suppress_already_installed_messages: bool
 ) -> ShardResult<()> {
     let type_str = package_type.as_str();
     let has_options = !options.is_empty();
@@ -142,7 +129,6 @@ pub fn package_operation_with_options(
                 _ => Err(ShardError::BrewError(format!("Unsupported operation '{:?}' for {}", operation, type_str))),
             }
         },
-        suppress_already_installed_messages
     )
 }
 
@@ -150,14 +136,12 @@ pub fn package_operation_with_options(
 pub fn install_formula_with_options(
     name: &str, 
     options: &[String], 
-    suppress_already_installed_messages: bool
 ) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Formula,
         PackageOperation::Install,
         name,
         options,
-        suppress_already_installed_messages
     )
 }
 
@@ -165,14 +149,12 @@ pub fn install_formula_with_options(
 pub fn upgrade_formula_with_options(
     name: &str, 
     options: &[String], 
-    suppress_already_installed_messages: bool
 ) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Formula,
         PackageOperation::Upgrade,
         name,
         options,
-        suppress_already_installed_messages
     )
 }
 
@@ -180,14 +162,12 @@ pub fn upgrade_formula_with_options(
 pub fn install_cask_with_options(
     name: &str, 
     options: &[String], 
-    suppress_already_installed_messages: bool
 ) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Cask,
         PackageOperation::Install,
         name,
         options,
-        suppress_already_installed_messages
     )
 }
 
@@ -195,14 +175,12 @@ pub fn install_cask_with_options(
 pub fn upgrade_cask_with_options(
     name: &str, 
     options: &[String], 
-    suppress_already_installed_messages: bool
 ) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Cask,
         PackageOperation::Upgrade,
         name,
         options,
-        suppress_already_installed_messages
     )
 }
 
@@ -250,7 +228,7 @@ pub fn add_tap(name: &str) -> ShardResult<()> {
         Err(e) => {
             let error_msg = e.to_string();
             if error_msg.contains("already tapped") {
-                println!("Tap {} is already added", style(name).bold());
+                // Skip already tapped message
                 Ok(())
             } else {
                 eprintln!("Error adding tap {}: {}", name, e);
@@ -374,27 +352,28 @@ where
             style(package).bold());
     }
     
-    // Create a progress bar
-    let progress_bar = ProgressBar::new(packages.len() as u64);
-    progress_bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+    // Create a spinner instead of a progress bar
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} {msg}")
             .unwrap()
-            .progress_chars("=>-")
     );
-    progress_bar.set_message(format!("{}ing {} packages", operation, package_type.as_str()));
+    
+    spinner.set_message(format!("{}ing {} packages", operation, package_type.as_str()));
+    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
     
     // For individual installation, we'll manually handle each package with progress
     if packages.len() == 1 {
         let package = &packages[0];
-        progress_bar.set_message(format!("{}ing {}: {}", 
+        spinner.set_message(format!("{}ing {}: {}", 
             operation.to_lowercase(), 
             package_type.as_str(), 
             style(package).bold()));
         
         match operation_fn(packages) {
             Ok(_) => {
-                progress_bar.finish_with_message(format!("{} {} {} {}",
+                spinner.finish_with_message(format!("{} {} {} {}",
                     style("✓").bold().green(),
                     operation,
                     package_type.as_str(),
@@ -402,7 +381,7 @@ where
                 Ok(())
             },
             Err(e) => {
-                progress_bar.finish_with_message(format!("{} Failed to {} {}: {}",
+                spinner.finish_with_message(format!("{} Failed to {} {}: {}",
                     style("✗").bold().red(),
                     operation.to_lowercase(),
                     package,
@@ -414,7 +393,7 @@ where
         // For multiple packages
         match operation_fn(packages) {
             Ok(_) => {
-                progress_bar.finish_with_message(format!("{} Successfully {}d {} {}s", 
+                spinner.finish_with_message(format!("{} Successfully {}d {} {}s", 
                     style("✓").bold().green(),
                     operation.to_lowercase(),
                     packages.len(),
@@ -422,7 +401,7 @@ where
                 Ok(())
             },
             Err(e) => {
-                progress_bar.finish_with_message(format!("{} Error {}ing {} {}s: {}", 
+                spinner.finish_with_message(format!("{} Error {}ing {} {}s: {}", 
                     style("✗").bold().red(),
                     operation.to_lowercase(),
                     packages.len(),
@@ -578,7 +557,6 @@ impl PackageProcessor {
         T: PackageInfo,
     {
         let mut result = PackageProcessResult::default();
-        let pkg_type_str = self.package_type.as_str();
         
         // First pass: categorize packages
         for package in packages {
@@ -607,21 +585,15 @@ impl PackageProcessor {
                     // Has custom options, needs individual processing
                     if !is_installed {
                         result.with_options.push((name.to_string(), options.to_vec()));
-                    } else if !self.suppress_messages {
-                        println!("{} already installed: {}", 
-                            pkg_type_str, style(name).bold());
                     }
                 },
                 _ if !is_installed => {
                     // Not installed, needs to be installed
                     result.to_install.push(name.to_string());
                 },
-                _ if !self.suppress_messages => {
+                _ => {
                     // Already installed, no action needed
-                    println!("{} already installed: {}", 
-                        pkg_type_str, style(name).bold());
                 },
-                _ => {},
             }
         }
         
@@ -657,20 +629,20 @@ impl PackageProcessor {
                     // Upgrade with options
                     match self.package_type {
                         PackageType::Formula => {
-                            upgrade_formula_with_options(name, options, self.suppress_messages)?
+                            upgrade_formula_with_options(name, options)?
                         },
                         PackageType::Cask => {
-                            upgrade_cask_with_options(name, options, self.suppress_messages)?
+                            upgrade_cask_with_options(name, options)?
                         },
                     }
                 } else {
                     // Install with options
                     match self.package_type {
                         PackageType::Formula => {
-                            install_formula_with_options(name, options, self.suppress_messages)?
+                            install_formula_with_options(name, options)?
                         },
                         PackageType::Cask => {
-                            install_cask_with_options(name, options, self.suppress_messages)?
+                            install_cask_with_options(name, options)?
                         },
                     }
                 }
@@ -785,7 +757,7 @@ impl BrewUtils {
             Err(e) => {
                 let error_msg = e.to_string();
                 if error_msg.contains("already tapped") {
-                    println!("Tap {} already exists, skipping", style(name).bold());
+                    // Skip already tapped message
                     Ok(())
                 } else {
                     eprintln!("Error adding tap {}: {}", name, e);
