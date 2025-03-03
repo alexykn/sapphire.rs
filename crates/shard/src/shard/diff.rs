@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::path::Path;
-use crate::manifest::Manifest;
+use crate::core::manifest::Manifest;
 use sapphire_core::utils::file_system as fs;
 
 /// Check for differences between manifest and installed packages

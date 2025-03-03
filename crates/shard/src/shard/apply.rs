@@ -4,9 +4,9 @@ use std::fs;
 use std::io::Write;
 use console::style;
 use shellexpand;
-use crate::manifest::{Manifest, PackageState};
+use crate::core::manifest::{Manifest, PackageState};
 use sapphire_core::utils::file_system as fs_utils;
-use crate::package_processor::{
+use crate::package::processor::{
     PackageType, PackageOperation, PackageProcessResult, PackageProcessor,
     batch_install_formulae, batch_install_casks, batch_upgrade_formulae, batch_upgrade_casks,
     get_installed_formulae, get_installed_casks, get_installed_taps, get_dependency_packages,
@@ -633,7 +633,7 @@ fn apply_all_enabled_shards_internal(dry_run: bool, skip_cleanup: bool, should_e
         options: Vec<String>,
     }
     
-    impl crate::package_processor::PackageInfo for SimplePackage {
+    impl crate::package::processor::PackageInfo for SimplePackage {
         fn state(&self) -> PackageState {
             self.state.clone()
         }

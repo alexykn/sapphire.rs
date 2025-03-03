@@ -1,16 +1,10 @@
 // Shard - Package management tool for macOS using Homebrew
 
-// Package management functionality
-pub mod apply;
-pub mod brew_client;
-pub mod diff;
-pub mod init;
-pub mod manage;
-pub mod manifest;
-pub mod migrate;
+// Core modules
+pub mod core;
 pub mod package;
-pub mod package_processor;
-pub mod search;
+pub mod brew;
+pub mod shard;
 pub mod utils;
 
 // CLI handling
@@ -18,6 +12,16 @@ pub mod cli;
 
 // Re-export core functionality
 pub use sapphire_core::{SapphireError, SapphireResult};
+
+// Re-export common types and functions for convenience
+pub use core::manifest;
+pub use brew::BrewClient;
+pub use shard::{
+    apply::{apply, apply_all_enabled_shards},
+    diff::diff,
+    init::init_shards,
+    manager::{disable_shard, enable_shard, grow_shard, shatter_shard}
+};
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::fs;
 use sapphire_core::utils::file_system as fs_utils;
 use shellexpand;
-use crate::manifest::Manifest;
+use crate::core::manifest::Manifest;
 use std::env;
 use std::path::Path;
 

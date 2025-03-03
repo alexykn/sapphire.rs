@@ -7,11 +7,11 @@ use shellexpand;
 use std::fs;
 use std::collections::HashMap;
 use sapphire_core::utils::file_system as fs_utils;
-use crate::utils::validate_brew as validation;
-use crate::manifest::{Manifest, Formula, Cask, PackageState};
-use crate::manage;
-use crate::apply;
-use crate::package_processor;
+use crate::utils::validate as validation;
+use crate::core::manifest::{Manifest, Formula, Cask, PackageState};
+use crate::shard::manager as manage;
+use crate::shard::apply;
+use crate::package::processor as package_processor;
 
 /// Package type enum
 #[derive(Debug, PartialEq, Clone, Copy)]

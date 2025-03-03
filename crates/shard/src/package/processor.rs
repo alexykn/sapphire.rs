@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
-use crate::manifest::{PackageState, Formula, Cask};
-use crate::brew_client::BrewClient;
+use crate::core::manifest::{PackageState, Formula, Cask};
+use crate::brew::client::BrewClient;
 use std::process::Command;
 use std::collections::HashSet;
 

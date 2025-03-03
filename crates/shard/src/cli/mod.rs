@@ -2,8 +2,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use sapphire_core::logging::logger;
 use crate::{
-    apply, diff, init, manage, migrate, 
-    package, search
+    brew::search,
+    package::operations as package,
+    shard::{
+        apply, diff, init,
+        manager as manage,
+    }
 };
 
 #[derive(Debug, Parser)]
@@ -32,13 +36,6 @@ enum Commands {
         /// Skip cleanup after applying
         #[arg(long)]
         skip_cleanup: bool,
-    },
-    
-    /// Convert YAML shards to TOML format
-    Convert {
-        /// Force conversion even if TOML files already exist
-        #[arg(short, long)]
-        force: bool,
     },
     
     /// Check what would change if a shard was applied
@@ -85,29 +82,6 @@ enum Commands {
     Enable {
         /// Name of the shard to enable
         name: String,
-    },
-    
-    /// Import packages from Nix configuration to a new shard
-    Migrate {
-        /// Path to system-level Nix configuration file
-        #[arg(short = 's', long = "system_apps")]
-        system_nix: Option<String>,
-        
-        /// Path to user-level Nix configuration file
-        #[arg(short = 'u', long = "user_apps")]
-        user_nix: Option<String>,
-        
-        /// Custom name for the generated shard
-        #[arg(short = 'n', long = "name")]
-        name: Option<String>,
-        
-        /// Skip interactive package suggestions
-        #[arg(short = 'i', long = "non-interactive")]
-        non_interactive: bool,
-        
-        /// Dry run without making changes
-        #[arg(short, long)]
-        dry_run: bool,
     },
     
     /// Search for packages
@@ -185,9 +159,6 @@ pub fn run() -> Result<()> {
                 apply::apply(&shard, dry_run, skip_cleanup)
             }
         },
-        Commands::Convert { force } => {
-            migrate::convert_yaml_to_toml(force)
-        },
         Commands::Diff { shard } => {
             diff::diff(&shard)
         },
@@ -205,15 +176,6 @@ pub fn run() -> Result<()> {
         },
         Commands::Enable { name } => {
             manage::enable_shard(&name)
-        },
-        Commands::Migrate { system_nix, user_nix, name, non_interactive, dry_run } => {
-            migrate::migrate_from_nix(
-                system_nix.as_deref(), 
-                user_nix.as_deref(), 
-                name.as_deref(), 
-                non_interactive,
-                dry_run
-            )
         },
         Commands::Search { query, r#type, deep } => {
             search::search(&query, &r#type, deep)

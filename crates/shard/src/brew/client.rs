@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use std::thread;
 use std::io::{Read, BufReader, BufRead};
 use std::sync::mpsc;
-use crate::utils::validate_brew as validation;
+use crate::utils::validate as validation;
 
 /// Homebrew client for interacting with brew CLI
 pub struct BrewClient {

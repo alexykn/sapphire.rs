@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::fmt;
 use std::error::Error as StdError;
 use chrono::Utc;
-use crate::manifest::Manifest;
+use crate::core::manifest::Manifest;
 
 /// Custom error type for shard management operations
 #[derive(Debug)]
