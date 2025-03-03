@@ -10,8 +10,8 @@ pub mod parser;
 // CLI handling
 pub mod cli;
 
-// Re-export core functionality
-pub use sapphire_core::{SapphireError, SapphireResult};
+// Utilities
+pub mod utils;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

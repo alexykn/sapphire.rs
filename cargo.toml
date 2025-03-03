@@ -7,7 +7,6 @@ description = "A declarative system management suite for macOS"
 
 [workspace]
 members = [
-    "crates/sapphire-core",
     "crates/sapphire",
     "crates/shard",
     "crates/fragment",

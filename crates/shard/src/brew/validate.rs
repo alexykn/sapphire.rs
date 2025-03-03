@@ -12,7 +12,7 @@
 //! in command execution to prevent potential command injection attacks.
 
 /// Utilities for validating user input for security
-use anyhow::{bail, Result};
+use crate::utils::{ShardResult, ShardError};
 use regex::Regex;
 use lazy_static::lazy_static;
 
@@ -30,61 +30,69 @@ lazy_static! {
 }
 
 /// Validate a Homebrew package name (formula or cask)
-pub fn validate_package_name(name: &str) -> Result<&str> {
+pub fn validate_package_name(name: &str) -> ShardResult<&str> {
     if name.is_empty() {
-        bail!("Package name cannot be empty");
+        return Err(ShardError::ValidationError("Package name cannot be empty".to_string()));
     }
     
     if !PACKAGE_NAME_REGEX.is_match(name) {
-        bail!("Invalid package name format: '{}'. Names must contain only letters, numbers, dots, dashes, underscores, plus signs, and at signs (@), and must start with a letter or number.", name);
+        return Err(ShardError::ValidationError(
+            format!("Invalid package name format: '{}'. Names must contain only letters, numbers, dots, dashes, underscores, plus signs, and at signs (@), and must start with a letter or number.", name)
+        ));
     }
     
     Ok(name)
 }
 
 /// Validate a Homebrew tap name
-pub fn validate_tap_name(name: &str) -> Result<&str> {
+pub fn validate_tap_name(name: &str) -> ShardResult<&str> {
     if name.is_empty() {
-        bail!("Tap name cannot be empty");
+        return Err(ShardError::ValidationError("Tap name cannot be empty".to_string()));
     }
     
     if !TAP_NAME_REGEX.is_match(name) {
-        bail!("Invalid tap name format: '{}'. Names must be in the format 'user/repo'", name);
+        return Err(ShardError::ValidationError(
+            format!("Invalid tap name format: '{}'. Names must be in the format 'user/repo'", name)
+        ));
     }
     
     Ok(name)
 }
 
 /// Validate a Homebrew command option
-pub fn validate_option(option: &str) -> Result<&str> {
+pub fn validate_option(option: &str) -> ShardResult<&str> {
     if option.is_empty() {
-        bail!("Option cannot be empty");
+        return Err(ShardError::ValidationError("Option cannot be empty".to_string()));
     }
     
     if !OPTION_REGEX.is_match(option) {
-        bail!("Invalid option format: '{}'. Options must start with - or -- followed by alphanumeric characters, and may include an = with a value", option);
+        return Err(ShardError::ValidationError(
+            format!("Invalid option format: '{}'. Options must start with - or -- followed by alphanumeric characters, and may include an = with a value", option)
+        ));
     }
     
     Ok(option)
 }
 
 /// Validate a search query - slightly more permissive than package names
-pub fn validate_search_query(query: &str) -> Result<&str> {
+pub fn validate_search_query(query: &str) -> ShardResult<&str> {
     if query.is_empty() {
-        bail!("Search query cannot be empty");
+        return Err(ShardError::ValidationError("Search query cannot be empty".to_string()));
     }
     
     // Allow spaces and some special characters for search, but still block obvious shell injection
     if query.contains(';') || query.contains('&') || query.contains('|') || 
        query.contains('<') || query.contains('>') || query.contains('`') {
-        bail!("Invalid search query: '{}'. Query contains prohibited characters", query);
+        return Err(ShardError::ValidationError(
+            format!("Invalid search query: '{}'. Query contains prohibited characters", query)
+        ));
     }
     
     Ok(query)
 }
 
 /// Validate a vector of options
-pub fn validate_options(options: &[String]) -> Result<()> {
+pub fn validate_options(options: &[String]) -> ShardResult<()> {
     for option in options {
         validate_option(option)?;
     }

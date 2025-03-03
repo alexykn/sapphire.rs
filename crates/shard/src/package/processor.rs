@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use crate::ShardResult;
+use crate::utils::{ShardError, ResultExt};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use crate::core::manifest::{PackageState, Formula, Cask};
@@ -54,9 +55,9 @@ pub fn execute_brew_command<F, S>(
     has_options: bool,
     command: F,
     suppress_already_installed_messages: bool
-) -> Result<()> 
+) -> ShardResult<()> 
 where
-    F: FnOnce() -> Result<()>,
+    F: FnOnce() -> ShardResult<()>,
     S: AsRef<str>,
 {
     let options_text = if has_options { " with custom options" } else { "" };
@@ -123,7 +124,7 @@ pub fn package_operation_with_options(
     name: &str, 
     options: &[String], 
     suppress_already_installed_messages: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     let type_str = package_type.as_str();
     let has_options = !options.is_empty();
     
@@ -138,7 +139,7 @@ pub fn package_operation_with_options(
                 (PackageType::Formula, PackageOperation::Upgrade) => get_brew_client().upgrade_formula_with_options(name, options),
                 (PackageType::Cask, PackageOperation::Install) => get_brew_client().install_cask(name, options),
                 (PackageType::Cask, PackageOperation::Upgrade) => get_brew_client().upgrade_cask_with_options(name, options),
-                _ => anyhow::bail!("Unsupported operation '{:?}' for {}", operation, type_str),
+                _ => Err(ShardError::BrewError(format!("Unsupported operation '{:?}' for {}", operation, type_str))),
             }
         },
         suppress_already_installed_messages
@@ -150,7 +151,7 @@ pub fn install_formula_with_options(
     name: &str, 
     options: &[String], 
     suppress_already_installed_messages: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Formula,
         PackageOperation::Install,
@@ -165,7 +166,7 @@ pub fn upgrade_formula_with_options(
     name: &str, 
     options: &[String], 
     suppress_already_installed_messages: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Formula,
         PackageOperation::Upgrade,
@@ -180,7 +181,7 @@ pub fn install_cask_with_options(
     name: &str, 
     options: &[String], 
     suppress_already_installed_messages: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Cask,
         PackageOperation::Install,
@@ -195,7 +196,7 @@ pub fn upgrade_cask_with_options(
     name: &str, 
     options: &[String], 
     suppress_already_installed_messages: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     package_operation_with_options(
         PackageType::Cask,
         PackageOperation::Upgrade,
@@ -210,7 +211,7 @@ pub fn uninstall_package(
     package_type: PackageType,
     name: &str,
     force: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     let type_str = package_type.as_str();
     println!("Uninstalling {}: {}", type_str, style(name).bold());
     
@@ -239,7 +240,7 @@ pub fn uninstall_package(
 }
 
 /// Helper function to add a tap
-pub fn add_tap(name: &str) -> Result<()> {
+pub fn add_tap(name: &str) -> ShardResult<()> {
     println!("Adding tap: {}", style(name).bold());
     match get_brew_client().add_tap(name) {
         Ok(_) => {
@@ -260,7 +261,7 @@ pub fn add_tap(name: &str) -> Result<()> {
 }
 
 /// Run Homebrew cleanup
-pub fn run_cleanup() -> Result<()> {
+pub fn run_cleanup() -> ShardResult<()> {
     println!("Running final cleanup...");
     match get_brew_client().cleanup(true) {
         Ok(_) => {
@@ -275,53 +276,53 @@ pub fn run_cleanup() -> Result<()> {
 }
 
 /// Check if a formula is outdated
-pub fn is_outdated_formula(formula: &str) -> Result<bool> {
+pub fn is_formula_outdated(formula: &str) -> ShardResult<bool> {
     let outdated_check = Command::new("brew")
         .args(["outdated", "--formula", formula, "--quiet"])
         .output()
-        .context(format!("Failed to check if formula is outdated: {}", formula))?;
+        .with_context(|| format!("Failed to check if formula is outdated: {}", formula))?;
     
     let output = String::from_utf8_lossy(&outdated_check.stdout);
     Ok(!output.trim().is_empty())
 }
 
 /// Check if a cask is outdated
-pub fn is_outdated_cask(cask: &str) -> Result<bool> {
+pub fn is_cask_outdated(cask: &str) -> ShardResult<bool> {
     let outdated_check = Command::new("brew")
         .args(["outdated", "--cask", cask, "--quiet"])
         .output()
-        .context(format!("Failed to check if cask is outdated: {}", cask))?;
+        .with_context(|| format!("Failed to check if cask is outdated: {}", cask))?;
     
     let output = String::from_utf8_lossy(&outdated_check.stdout);
     Ok(!output.trim().is_empty())
 }
 
 /// Get a list of all currently installed formulae
-pub fn get_installed_formulae() -> Result<Vec<String>> {
+pub fn get_installed_formulae() -> ShardResult<Vec<String>> {
     get_brew_client().get_installed_formulae()
         .with_context(|| "Failed to get list of installed formulae")
 }
 
 /// Get a list of all currently installed casks
-pub fn get_installed_casks() -> Result<Vec<String>> {
+pub fn get_installed_casks() -> ShardResult<Vec<String>> {
     get_brew_client().get_installed_casks()
         .with_context(|| "Failed to get list of installed casks")
 }
 
 /// Get a list of all currently installed taps
-pub fn get_installed_taps() -> Result<Vec<String>> {
+pub fn get_installed_taps() -> ShardResult<Vec<String>> {
     get_brew_client().get_installed_taps()
         .with_context(|| "Failed to get list of installed taps")
 }
 
 /// Get a list of all packages installed as dependencies
-pub fn get_dependency_packages() -> Result<Vec<String>> {
+pub fn get_dependency_packages() -> ShardResult<Vec<String>> {
     get_brew_client().get_dependency_packages()
         .with_context(|| "Failed to get list of dependency packages")
 }
 
 /// Get a list of explicitly installed packages (both formulae and casks, excluding dependencies)
-pub fn get_all_main_packages() -> Result<(Vec<String>, Vec<String>)> {
+pub fn get_all_main_packages() -> ShardResult<(Vec<String>, Vec<String>)> {
     // Get all installed formulae and casks
     let all_formulae = get_installed_formulae()
         .with_context(|| "Failed to get installed formulae for main package listing")?;
@@ -347,9 +348,9 @@ pub fn batch_package_operation<F>(
     packages: &[String],
     dry_run: bool,
     operation_fn: F
-) -> Result<()>
+) -> ShardResult<()>
 where
-    F: FnOnce(&[String]) -> Result<()>,
+    F: FnOnce(&[String]) -> ShardResult<()>,
 {
     if packages.is_empty() {
         return Ok(());
@@ -434,7 +435,7 @@ where
 }
 
 /// Perform a batch install of multiple formulae at once
-pub fn batch_install_formulae(formulae: &[String], dry_run: bool) -> Result<()> {
+pub fn batch_install_formulae(formulae: &[String], dry_run: bool) -> ShardResult<()> {
     batch_package_operation(
         PackageType::Formula,
         "Installing",
@@ -445,7 +446,7 @@ pub fn batch_install_formulae(formulae: &[String], dry_run: bool) -> Result<()> 
 }
 
 /// Perform a batch upgrade of multiple formulae at once
-pub fn batch_upgrade_formulae(formulae: &[String], dry_run: bool) -> Result<()> {
+pub fn batch_upgrade_formulae(formulae: &[String], dry_run: bool) -> ShardResult<()> {
     batch_package_operation(
         PackageType::Formula,
         "Upgrading",
@@ -456,7 +457,7 @@ pub fn batch_upgrade_formulae(formulae: &[String], dry_run: bool) -> Result<()> 
 }
 
 /// Perform a batch install of multiple casks at once
-pub fn batch_install_casks(casks: &[String], dry_run: bool) -> Result<()> {
+pub fn batch_install_casks(casks: &[String], dry_run: bool) -> ShardResult<()> {
     batch_package_operation(
         PackageType::Cask,
         "Installing",
@@ -467,7 +468,7 @@ pub fn batch_install_casks(casks: &[String], dry_run: bool) -> Result<()> {
 }
 
 /// Perform a batch upgrade of multiple casks at once
-pub fn batch_upgrade_casks(casks: &[String], dry_run: bool) -> Result<()> {
+pub fn batch_upgrade_casks(casks: &[String], dry_run: bool) -> ShardResult<()> {
     batch_package_operation(
         PackageType::Cask,
         "Upgrading",
@@ -572,7 +573,7 @@ impl PackageProcessor {
     }
     
     /// Process a list of packages based on their state
-    pub fn process_packages<T>(&self, packages: &[T]) -> Result<PackageProcessResult>
+    pub fn process_packages<T>(&self, packages: &[T]) -> ShardResult<PackageProcessResult>
     where 
         T: PackageInfo,
     {
@@ -628,7 +629,7 @@ impl PackageProcessor {
     }
     
     /// Execute operations on the packages based on the processed results
-    pub fn execute_operations(&self, result: &PackageProcessResult, dry_run: bool) -> Result<()> {
+    pub fn execute_operations(&self, result: &PackageProcessResult, dry_run: bool) -> ShardResult<()> {
         let pkg_type_str = self.package_type.as_str();
         
         // Process installations
@@ -701,7 +702,7 @@ impl PackageProcessor {
     }
 
     /// Create a new processor for formulae
-    pub fn for_formulae(suppress_messages: bool) -> Result<Self> {
+    pub fn for_formulae(suppress_messages: bool) -> ShardResult<Self> {
         Ok(Self {
             package_type: PackageType::Formula,
             installed_packages: get_installed_formulae()?,
@@ -710,7 +711,7 @@ impl PackageProcessor {
     }
     
     /// Create a new processor for casks
-    pub fn for_casks(suppress_messages: bool) -> Result<Self> {
+    pub fn for_casks(suppress_messages: bool) -> ShardResult<Self> {
         Ok(Self {
             package_type: PackageType::Cask,
             installed_packages: get_installed_casks()?,
@@ -719,37 +720,37 @@ impl PackageProcessor {
     }
     
     /// Get a list of all currently installed formulae
-    pub fn get_installed_formulae() -> Result<Vec<String>> {
+    pub fn get_installed_formulae() -> ShardResult<Vec<String>> {
         get_installed_formulae()
     }
 
     /// Get a list of all currently installed casks
-    pub fn get_installed_casks() -> Result<Vec<String>> {
+    pub fn get_installed_casks() -> ShardResult<Vec<String>> {
         get_installed_casks()
     }
 
     /// Get a list of all currently installed taps
-    pub fn get_installed_taps() -> Result<Vec<String>> {
+    pub fn get_installed_taps() -> ShardResult<Vec<String>> {
         get_installed_taps()
     }
 
     /// Get a list of all packages installed as dependencies
-    pub fn get_dependency_packages() -> Result<Vec<String>> {
+    pub fn get_dependency_packages() -> ShardResult<Vec<String>> {
         get_dependency_packages()
     }
     
     /// Get a list of explicitly installed packages (both formulae and casks, excluding dependencies)
-    pub fn get_all_main_packages() -> Result<(Vec<String>, Vec<String>)> {
+    pub fn get_all_main_packages() -> ShardResult<(Vec<String>, Vec<String>)> {
         get_all_main_packages()
     }
     
     /// Uninstall a package using this processor's package type
-    pub fn uninstall(&self, name: &str, force: bool) -> Result<()> {
+    pub fn uninstall(&self, name: &str, force: bool) -> ShardResult<()> {
         uninstall_package(self.package_type, name, force)
     }
     
     /// Uninstall a package
-    pub fn uninstall_package(package_type: PackageType, name: &str, force: bool) -> Result<()> {
+    pub fn uninstall_package(package_type: PackageType, name: &str, force: bool) -> ShardResult<()> {
         uninstall_package(package_type, name, force)
     }
 }
@@ -759,7 +760,7 @@ pub struct BrewUtils;
 
 impl BrewUtils {
     /// Run Homebrew cleanup
-    pub fn run_cleanup() -> Result<()> {
+    pub fn run_cleanup() -> ShardResult<()> {
         println!("Running final cleanup...");
         match get_brew_client().cleanup(true) {
             Ok(_) => {
@@ -774,7 +775,7 @@ impl BrewUtils {
     }
     
     /// Add a tap to Homebrew
-    pub fn add_tap(name: &str) -> Result<()> {
+    pub fn add_tap(name: &str) -> ShardResult<()> {
         println!("Adding tap: {}", style(name).bold());
         match get_brew_client().add_tap(name) {
             Ok(_) => {

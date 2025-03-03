@@ -1,6 +1,6 @@
 use std::path::Path;
 use anyhow::{Context, Result};
-use sapphire_core::utils::file_system as fs;
+use crate::utils;
 
 /// Initialize Sapphire environment for first-time setup
 pub fn initialize(mode: &str) -> Result<()> {
@@ -47,7 +47,7 @@ fn create_directory_structure(base_dir: &Path) -> Result<()> {
     
     for dir in dirs.iter() {
         let dir_path = base_dir.join(dir);
-        fs::ensure_dir_exists(&dir_path)
+        utils::ensure_dir_exists(&dir_path)
             .context(format!("Failed to create directory: {}", dir_path.display()))?;
         
         tracing::debug!("Created directory: {}", dir_path.display());
@@ -58,13 +58,13 @@ fn create_directory_structure(base_dir: &Path) -> Result<()> {
 
 fn create_initial_config(config_dir: &Path, mode: &str) -> Result<()> {
     // Create config directory if it doesn't exist
-    fs::ensure_dir_exists(config_dir)
+    utils::ensure_dir_exists(config_dir)
         .context(format!("Failed to create config directory: {}", config_dir.display()))?;
     
     // Create initial config.toml 
     let config_path = config_dir.join("config.toml");
     
-    if fs::path_exists(&config_path) {
+    if utils::path_exists(&config_path) {
         tracing::warn!("Configuration file already exists: {}", config_path.display());
         return Ok(());
     }

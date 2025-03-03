@@ -8,7 +8,7 @@
 //! ensuring backward compatibility while supporting proper separation of concerns.
 //! All operations enforce proper input validation to prevent command injection.
 
-use anyhow::Result;
+use crate::utils::ShardResult;
 use crate::brew::core::BrewCore;
 use crate::brew::installer::BrewInstaller;
 use crate::brew::search::BrewSearcher;
@@ -63,99 +63,99 @@ impl BrewClient {
     // Installer delegated methods
     
     /// Add a Homebrew tap
-    pub fn add_tap(&self, tap: &str) -> Result<()> {
+    pub fn add_tap(&self, tap: &str) -> ShardResult<()> {
         self.installer.add_tap(tap)
     }
     
     /// Install a Homebrew formula
-    pub fn install_formula(&self, formula: &str, options: &[String]) -> Result<()> {
+    pub fn install_formula(&self, formula: &str, options: &[String]) -> ShardResult<()> {
         self.installer.install_formula(formula, options)
     }
     
     /// Install a Homebrew cask
-    pub fn install_cask(&self, cask: &str, options: &[String]) -> Result<()> {
+    pub fn install_cask(&self, cask: &str, options: &[String]) -> ShardResult<()> {
         self.installer.install_cask(cask, options)
     }
 
     /// Get a list of all currently installed formulae
-    pub fn get_installed_formulae(&self) -> Result<Vec<String>> {
+    pub fn get_installed_formulae(&self) -> ShardResult<Vec<String>> {
         self.installer.get_installed_formulae()
     }
 
     /// Get a list of all currently installed casks
-    pub fn get_installed_casks(&self) -> Result<Vec<String>> {
+    pub fn get_installed_casks(&self) -> ShardResult<Vec<String>> {
         self.installer.get_installed_casks()
     }
 
     /// Get a list of all currently installed taps
-    pub fn get_installed_taps(&self) -> Result<Vec<String>> {
+    pub fn get_installed_taps(&self) -> ShardResult<Vec<String>> {
         self.installer.get_installed_taps()
     }
 
     /// Perform a batch install of multiple formulae at once
-    pub fn batch_install_formulae(&self, formulae: &[String]) -> Result<()> {
+    pub fn batch_install_formulae(&self, formulae: &[String]) -> ShardResult<()> {
         self.installer.batch_install_formulae(formulae)
     }
 
     /// Perform a batch install of multiple casks at once
-    pub fn batch_install_casks(&self, casks: &[String]) -> Result<()> {
+    pub fn batch_install_casks(&self, casks: &[String]) -> ShardResult<()> {
         self.installer.batch_install_casks(casks)
     }
 
     /// Perform a batch upgrade of multiple formulae at once
-    pub fn batch_upgrade_formulae(&self, formulae: &[String]) -> Result<()> {
+    pub fn batch_upgrade_formulae(&self, formulae: &[String]) -> ShardResult<()> {
         self.installer.batch_upgrade_formulae(formulae)
     }
 
     /// Perform a batch upgrade of multiple casks at once
-    pub fn batch_upgrade_casks(&self, casks: &[String]) -> Result<()> {
+    pub fn batch_upgrade_casks(&self, casks: &[String]) -> ShardResult<()> {
         self.installer.batch_upgrade_casks(casks)
     }
 
     /// Upgrade a formula with custom options
-    pub fn upgrade_formula_with_options(&self, formula: &str, options: &[String]) -> Result<()> {
+    pub fn upgrade_formula_with_options(&self, formula: &str, options: &[String]) -> ShardResult<()> {
         self.installer.upgrade_formula_with_options(formula, options)
     }
 
     /// Upgrade a cask with custom options
-    pub fn upgrade_cask_with_options(&self, cask: &str, options: &[String]) -> Result<()> {
+    pub fn upgrade_cask_with_options(&self, cask: &str, options: &[String]) -> ShardResult<()> {
         self.installer.upgrade_cask_with_options(cask, options)
     }
 
     /// Uninstall a formula
-    pub fn uninstall_formula(&self, formula: &str, force: bool) -> Result<()> {
+    pub fn uninstall_formula(&self, formula: &str, force: bool) -> ShardResult<()> {
         self.installer.uninstall_formula(formula, force)
     }
 
     /// Uninstall a cask
-    pub fn uninstall_cask(&self, cask: &str, force: bool) -> Result<()> {
+    pub fn uninstall_cask(&self, cask: &str, force: bool) -> ShardResult<()> {
         self.installer.uninstall_cask(cask, force)
     }
 
     /// Get a list of all packages installed as dependencies
-    pub fn get_dependency_packages(&self) -> Result<Vec<String>> {
+    pub fn get_dependency_packages(&self) -> ShardResult<Vec<String>> {
         self.installer.get_dependency_packages()
     }
 
     /// Run cleanup
-    pub fn cleanup(&self, prune_all: bool) -> Result<()> {
+    pub fn cleanup(&self, prune_all: bool) -> ShardResult<()> {
         self.installer.cleanup(prune_all)
     }
     
     // Searcher delegated methods
     
     /// Search for packages
-    pub fn search(&self, query: &str, formula_only: bool, cask_only: bool) -> Result<Vec<String>> {
+    pub fn search(&self, query: &str, formula_only: bool, cask_only: bool) -> ShardResult<Vec<String>> {
         self.searcher.search(query, formula_only, cask_only)
     }
     
     /// Get detailed information about a formula
-    pub fn get_formula_info(&self, formula: &str) -> Result<crate::brew::search::FormulaInfo> {
+    pub fn get_formula_info(&self, formula: &str) -> ShardResult<crate::brew::search::FormulaInfo> {
         self.searcher.get_formula_info(formula)
     }
     
     /// Get detailed information about a cask
-    pub fn get_cask_info(&self, cask: &str) -> Result<crate::brew::search::CaskInfo> {
+    pub fn get_cask_info(&self, cask: &str) -> ShardResult<crate::brew::search::CaskInfo> {
         self.searcher.get_cask_info(cask)
     }
 }

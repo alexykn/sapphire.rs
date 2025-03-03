@@ -1,24 +1,29 @@
-use anyhow::{Result, Context};
-use console::style;
 use std::path::PathBuf;
-use sapphire_core::utils::file_system as fs_utils;
-use shellexpand;
-use crate::core::manifest::Manifest;
 use std::env;
+use console::style;
+use shellexpand;
+use crate::core::manifest::{Manifest, Tap};
+use crate::utils::{
+    ShardResult, ResultExt, 
+    log_success, log_warning, log_step, log_debug,
+    ensure_dir_exists
+};
 
 const SHARDS_DIR: &str = "~/.sapphire/shards";
 const DISABLED_DIR: &str = "~/.sapphire/disabled";
 
 /// Initialize default system and user shards
-pub fn init_shards(force: bool) -> Result<()> {
-    println!("{} system and user shards", style("Initializing").bold().green());
+pub fn init_shards(force: bool) -> ShardResult<()> {
+    log_step("Initializing system and user shards");
     
     let shards_dir = PathBuf::from(shellexpand::tilde(SHARDS_DIR).into_owned());
     let disabled_dir = PathBuf::from(shellexpand::tilde(DISABLED_DIR).into_owned());
     
     // Create directories if they don't exist
-    fs_utils::ensure_dir_exists(&shards_dir)?;
-    fs_utils::ensure_dir_exists(&disabled_dir)?;
+    ensure_dir_exists(&shards_dir)
+        .with_context(|| format!("Failed to create shards directory: {}", shards_dir.display()))?;
+    ensure_dir_exists(&disabled_dir)
+        .with_context(|| format!("Failed to create disabled shards directory: {}", disabled_dir.display()))?;
     
     // Get system shard path
     let system_path = PathBuf::from(format!("{}/system.toml", shards_dir.display()));
@@ -26,65 +31,75 @@ pub fn init_shards(force: bool) -> Result<()> {
     // Create system shard if it doesn't exist or force overwrite
     if !system_path.exists() || force {
         create_system_shard(&system_path)?;
+    } else {
+        log_warning("System shard already exists. Use --force to overwrite.");
     }
     
-    // Get username
-    let username = get_username()?;
-    
     // Get user shard path
-    let user_path = PathBuf::from(format!("{}/{}_user.toml", shards_dir.display(), username));
+    let user_path = PathBuf::from(format!("{}/user.toml", shards_dir.display()));
     
     // Create user shard if it doesn't exist or force overwrite
     if !user_path.exists() || force {
+        let username = get_username()?;
         create_user_shard(&user_path, &username)?;
+    } else {
+        log_warning("User shard already exists. Use --force to overwrite.");
     }
     
+    log_success("Initialization complete!");
     Ok(())
 }
 
-/// Get the current username
-fn get_username() -> Result<String> {
+/// Get current username
+fn get_username() -> ShardResult<String> {
+    // Try to get username from environment
     match env::var("USER") {
-        Ok(username) => Ok(username),
-        Err(_) => {
-            // Fallback to "user" if we can't get the username
+        Ok(username) if !username.is_empty() => {
+            log_debug(&format!("Found username from environment: {}", username));
+            Ok(username)
+        },
+        _ => {
+            log_warning("Could not determine username from environment, using 'user' as default");
             Ok("user".to_string())
         }
     }
 }
 
-/// Create a system shard file
-fn create_system_shard(path: &PathBuf) -> Result<()> {
-    let mut system_manifest = Manifest::new();
-    system_manifest.metadata.description = "System-level packages".to_string();
-    system_manifest.metadata.protected = true; // System shard is protected
+/// Create system shard with default packages
+fn create_system_shard(path: &PathBuf) -> ShardResult<()> {
+    let mut manifest = Manifest::new();
     
-    if path.exists() {
-        println!("{} Overwriting existing system shard", style("Warning:").bold().yellow());
-    }
+    // Set metadata
+    manifest.metadata.name = "system".to_string();
+    manifest.metadata.description = "System-level packages".to_string();
+    manifest.metadata.protected = true;
+    manifest.metadata.protection_level = 2; // System level protection
     
-    // Save the system manifest
-    system_manifest.to_file(path)
-        .context("Failed to create system shard")?;
+    // Add some common taps
+    manifest.taps.push(Tap { name: "homebrew/core".to_string() });
+    manifest.taps.push(Tap { name: "homebrew/cask".to_string() });
     
-    println!("{} Created system shard: {}", style("✓").bold().green(), style(path.display()).bold());
+    // Write to file
+    manifest.to_file(path.to_str().unwrap_or_default())
+        .with_context(|| format!("Failed to create system shard at {}", path.display()))?;
+    
+    log_success(&format!("Created system shard at {}", style(path.display()).bold()));
     Ok(())
 }
 
-/// Create a user shard file
-fn create_user_shard(path: &PathBuf, username: &str) -> Result<()> {
-    let mut user_manifest = Manifest::new();
-    user_manifest.metadata.description = format!("User packages for {}", username);
-    user_manifest.metadata.protected = true; // User shard is also protected
+/// Create user shard with personal packages
+fn create_user_shard(path: &PathBuf, username: &str) -> ShardResult<()> {
+    let mut manifest = Manifest::new();
     
-    if path.exists() {
-        println!("{} Overwriting existing user shard", style("Warning:").bold().yellow());
-    }
+    // Set metadata
+    manifest.metadata.name = "user".to_string();
+    manifest.metadata.description = format!("User packages for {}", username);
+    manifest.metadata.owner = username.to_string();
     
-    // Save the user manifest
-    user_manifest.to_file(path)
-        .context("Failed to create user shard")?;
+    // Write to file
+    manifest.to_file(path.to_str().unwrap_or_default())
+        .with_context(|| format!("Failed to create user shard at {}", path.display()))?;
     
-    println!("{} Created user shard: {}", style("✓").bold().green(), style(path.display()).bold());
+    log_success(&format!("Created user shard at {}", style(path.display()).bold()));
     Ok(())
 }

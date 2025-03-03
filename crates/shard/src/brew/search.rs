@@ -5,7 +5,7 @@
 //! primarily focus on discovery and information retrieval. All user inputs are properly
 //! validated to prevent command injection.
 
-use anyhow::Result;
+use crate::ShardResult;
 use console::style;
 use crate::brew::core::BrewCore;
 use crate::brew::validate as validation;
@@ -47,7 +47,7 @@ impl BrewSearcher {
     /// # Security
     ///
     /// The search query is validated before execution to prevent command injection
-    pub fn search(&self, query: &str, formula_only: bool, cask_only: bool) -> Result<Vec<String>> {
+    pub fn search(&self, query: &str, formula_only: bool, cask_only: bool) -> ShardResult<Vec<String>> {
         // Validate search query
         let validated_query = validation::validate_search_query(query)?.to_string();
         
@@ -66,7 +66,7 @@ impl BrewSearcher {
     }
     
     /// Get detailed information about a formula
-    pub fn get_formula_info(&self, formula: &str) -> Result<FormulaInfo> {
+    pub fn get_formula_info(&self, formula: &str) -> ShardResult<FormulaInfo> {
         // Validate formula name
         let validated_formula = validation::validate_package_name(formula)?;
         
@@ -98,7 +98,7 @@ impl BrewSearcher {
     }
     
     /// Get detailed information about a cask
-    pub fn get_cask_info(&self, cask: &str) -> Result<CaskInfo> {
+    pub fn get_cask_info(&self, cask: &str) -> ShardResult<CaskInfo> {
         // Validate cask name
         let validated_cask = validation::validate_package_name(cask)?;
         
@@ -132,7 +132,7 @@ impl BrewSearcher {
     }
     
     /// Search homebrew formulas and display results
-    pub fn search_and_display_homebrew(&self, query: &str, deep: bool) -> Result<usize> {
+    pub fn search_and_display_homebrew(&self, query: &str, deep: bool) -> ShardResult<usize> {
         // Validate query
         let validated_query = validation::validate_search_query(query)?.to_string();
         
@@ -169,7 +169,7 @@ impl BrewSearcher {
     }
     
     /// Search homebrew casks and display results
-    pub fn search_and_display_casks(&self, query: &str, deep: bool) -> Result<usize> {
+    pub fn search_and_display_casks(&self, query: &str, deep: bool) -> ShardResult<usize> {
         // Validate query
         let validated_query = validation::validate_search_query(query)?.to_string();
         
@@ -206,7 +206,7 @@ impl BrewSearcher {
     }
     
     /// Search both Homebrew formulas and casks and display results
-    pub fn search_and_display_all(&self, query: &str, deep: bool) -> Result<(usize, usize)> {
+    pub fn search_and_display_all(&self, query: &str, deep: bool) -> ShardResult<(usize, usize)> {
         // Search formulas
         println!("\n::: 🍺 BREW FORMULAS :::\n");
         let formula_count = self.search_and_display_homebrew(query, deep)?;
@@ -226,7 +226,7 @@ impl BrewSearcher {
 }
 
 /// Main search function, used by the CLI
-pub fn search(query: &str, search_type: &str, deep: bool) -> Result<()> {
+pub fn search(query: &str, search_type: &str, deep: bool) -> ShardResult<()> {
     let searcher = BrewSearcher::new();
     let query = query.to_lowercase();
     let search_type = search_type.to_lowercase();

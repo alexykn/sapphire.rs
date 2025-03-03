@@ -1,15 +1,16 @@
-use anyhow::{Context, Result};
 use dialoguer::Confirm;
+use crate::utils::ShardResult;
 use console::style;
 use std::path::Path;
 use std::process::Command;
 use shellexpand;
-use sapphire_core::utils::file_system as fs_utils;
+use crate::utils::helpers as fs_utils;
 use crate::brew::validate as validation;
 use crate::core::manifest::{Manifest, Formula, Cask, PackageState};
 use crate::shard::manager as manage;
 use crate::shard::apply;
 use crate::package::processor as package_processor;
+use crate::utils::{ShardError, ResultExt};
 
 /// Package type enum
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -27,7 +28,7 @@ pub struct PackageAvailability {
 }
 
 /// Add packages to manifest and install them
-pub fn add_packages(packages: &[String], force_brew: bool, force_cask: bool, manifest_path: &str, dry_run: bool) -> Result<()> {
+pub fn add_packages(packages: &[String], force_brew: bool, force_cask: bool, manifest_path: &str, dry_run: bool) -> ShardResult<()> {
     // Validate all packages first - fail early if any are invalid
     for package in packages {
         validation::validate_package_name(package)
@@ -38,7 +39,7 @@ pub fn add_packages(packages: &[String], force_brew: bool, force_cask: bool, man
     let manifest_path = resolve_manifest_path(manifest_path)?;
     
     // First, load or create the manifest
-    let mut manifest = if fs_utils::path_exists(&manifest_path) {
+    let mut manifest = if fs_utils::path_exists(Path::new(&manifest_path)) {
         Manifest::from_file(&manifest_path)?
     } else {
         println!("Manifest file not found. Creating a new one.");
@@ -189,7 +190,7 @@ pub fn add_packages(packages: &[String], force_brew: bool, force_cask: bool, man
 }
 
 /// Remove packages from manifest
-pub fn remove_packages(packages: &[String], force_brew: bool, force_cask: bool, manifest_path: &str, dry_run: bool) -> Result<()> {
+pub fn remove_packages(packages: &[String], force_brew: bool, force_cask: bool, manifest_path: &str, dry_run: bool) -> ShardResult<()> {
     // Validate all packages first - fail early if any are invalid
     for package in packages {
         validation::validate_package_name(package)
@@ -201,8 +202,8 @@ pub fn remove_packages(packages: &[String], force_brew: bool, force_cask: bool, 
         let specific_manifest_path = resolve_manifest_path(manifest_path)?;
         
         // First, load the manifest
-        if !fs_utils::path_exists(&specific_manifest_path) {
-            anyhow::bail!("Shard file not found: {}", specific_manifest_path);
+        if !fs_utils::path_exists(Path::new(&specific_manifest_path)) {
+            return Err(ShardError::NotFound(specific_manifest_path.to_string()));
         }
         
         let _ = remove_packages_from_manifest(packages, force_brew, force_cask, &specific_manifest_path, dry_run)?;
@@ -216,7 +217,7 @@ pub fn remove_packages(packages: &[String], force_brew: bool, force_cask: bool, 
     let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
     
     // Check if shards directory exists
-    if !fs_utils::path_exists(&shards_dir) {
+    if !fs_utils::path_exists(Path::new(&shards_dir)) {
         println!("No shards directory found. Nothing to remove.");
         return Ok(());
     }
@@ -314,10 +315,10 @@ fn remove_packages_from_single_shard(
     shard_name: &str,
     dry_run: bool,
     packages_status: &mut std::collections::HashMap<String, Vec<String>>
-) -> Result<bool> {
+) -> ShardResult<bool> {
     // Validate the manifest path
     if !validation::is_valid_package_name(Path::new(manifest_path).file_stem().unwrap_or_default().to_str().unwrap_or("")) {
-        anyhow::bail!("Invalid shard name: {}", manifest_path);
+        return Err(ShardError::InvalidName(manifest_path.to_string()));
     }
     
     let mut manifest = Manifest::from_file(manifest_path)?;
@@ -490,7 +491,7 @@ fn remove_packages_from_single_shard(
 }
 
 /// Remove packages from a specific manifest file
-fn remove_packages_from_manifest(packages: &[String], force_brew: bool, force_cask: bool, manifest_path: &str, dry_run: bool) -> Result<bool> {
+fn remove_packages_from_manifest(packages: &[String], force_brew: bool, force_cask: bool, manifest_path: &str, dry_run: bool) -> ShardResult<bool> {
     // Get the shard name from the path
     let shard_name = Path::new(manifest_path)
         .file_stem()
@@ -507,7 +508,7 @@ fn remove_packages_from_manifest(packages: &[String], force_brew: bool, force_ca
 }
 
 /// Apply a manifest after package removal, with emphasis on minimizing redundant output
-fn apply_manifest_after_removal(manifest: &Manifest, manifest_path: &str) -> Result<()> {
+fn apply_manifest_after_removal(manifest: &Manifest, manifest_path: &str) -> ShardResult<()> {
     // Get shard name from path for display purposes
     let shard_name = Path::new(manifest_path)
         .file_stem()
@@ -580,7 +581,7 @@ fn apply_manifest_after_removal(manifest: &Manifest, manifest_path: &str) -> Res
 }
 
 /// Resolve a manifest path, handling special cases like "user" or "system"
-fn resolve_manifest_path(manifest_path: &str) -> Result<String> {
+fn resolve_manifest_path(manifest_path: &str) -> ShardResult<String> {
     // Validate the manifest name for security
     if manifest_path != "all" && !manifest_path.contains('/') && !manifest_path.ends_with(".toml") {
         validation::validate_package_name(manifest_path)
@@ -614,7 +615,7 @@ fn resolve_manifest_path(manifest_path: &str) -> Result<String> {
 }
 
 /// Process a package and determine its type
-fn process_package(package_name: &str, force_brew: bool, force_cask: bool, dry_run: bool) -> Result<Option<(PackageType, PackageState)>> {
+fn process_package(package_name: &str, force_brew: bool, force_cask: bool, dry_run: bool) -> ShardResult<Option<(PackageType, PackageState)>> {
     // Validate package name first for safety
     validation::validate_package_name(package_name)?;
     
@@ -691,23 +692,23 @@ fn process_package(package_name: &str, force_brew: bool, force_cask: bool, dry_r
 }
 
 /// Check if a package is available as brew and/or cask
-fn check_package_availability(package_name: &str) -> Result<PackageAvailability> {
+fn check_package_availability(package_name: &str) -> ShardResult<PackageAvailability> {
     // Validate package name first for safety
     let validated_name = validation::validate_package_name(package_name)?;
     
-    // Check as brew formula
+    // Check if it's a brew formula
     let brew_output = Command::new("brew")
         .args(["info", "--formula", validated_name])
         .output()
-        .context(format!("Failed to check brew formula: {}", validated_name))?;
+        .with_context(|| format!("Failed to check brew formula: {}", validated_name))?;
     
     let available_as_brew = brew_output.status.success();
     
-    // Check as cask
+    // Check if it's a cask
     let cask_output = Command::new("brew")
         .args(["info", "--cask", validated_name])
         .output()
-        .context(format!("Failed to check cask: {}", validated_name))?;
+        .with_context(|| format!("Failed to check cask: {}", validated_name))?;
     
     let available_as_cask = cask_output.status.success();
     

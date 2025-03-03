@@ -1,6 +1,6 @@
+use crate::utils;
 use anyhow::Result;
 use std::path::Path;
-use sapphire_core::utils::file_system as fs;
 use crate::parser::{Fragment, FragmentType};
 use serde_yaml::{Mapping, Value};
 
@@ -10,7 +10,7 @@ pub fn init<P: AsRef<Path>>(fragment_type: &str, path: P) -> Result<()> {
     
     // Ensure the parent directory exists
     if let Some(parent) = path.parent() {
-        fs::ensure_dir_exists(parent)?;
+        utils::ensure_dir_exists(parent)?;
     }
     
     // Parse fragment type
@@ -31,7 +31,7 @@ pub fn init<P: AsRef<Path>>(fragment_type: &str, path: P) -> Result<()> {
     };
     
     // Check if the fragment already exists
-    if fs::path_exists(&file_path) {
+    if utils::path_exists(&file_path) {
         anyhow::bail!("Fragment already exists: {}", file_path.display());
     }
     

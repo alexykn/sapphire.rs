@@ -2,11 +2,16 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::fs;
 use crate::parser::Fragment;
-use sapphire_core::utils::file_system as fs_utils;
+use crate::utils;
 
 /// Apply configuration fragments
 pub fn apply<P: AsRef<Path>>(path: P, dry_run: bool) -> Result<()> {
     let path = path.as_ref();
+    
+    // Verify the path exists
+    if !utils::path_exists(path) {
+        anyhow::bail!("Fragment file not found: {}", path.display());
+    }
     
     let files = if path.is_dir() {
         // Get all .toml files in the directory
@@ -60,7 +65,7 @@ pub fn apply<P: AsRef<Path>>(path: P, dry_run: bool) -> Result<()> {
 
 /// Apply a single fragment file
 fn apply_fragment(path: &Path, dry_run: bool) -> Result<()> {
-    if !fs_utils::path_exists(path) {
+    if !utils::path_exists(path) {
         anyhow::bail!("Fragment file does not exist: {}", path.display());
     }
     

@@ -1,7 +1,12 @@
 // Shard binary entry point
-use anyhow::Result;
-use shard;
+use shard::{ShardResult, log_success};
 
-fn main() -> Result<()> {
+fn main() -> ShardResult<()> {
+    // Initialize logging with default level (INFO)
+    shard::init_logging(None);
+    
+    log_success("Shard initialized successfully");
+    
+    // Run the CLI
     shard::cli::run()
 } 

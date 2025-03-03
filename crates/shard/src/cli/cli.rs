@@ -1,6 +1,5 @@
-use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sapphire_core::logging::logger;
+use crate::utils::{ShardResult, init_logging};
 
 use crate::{
     brew::search,
@@ -12,7 +11,7 @@ use crate::{
 };
 
 #[derive(Debug, Parser)]
-#[command(author, version, about = "Shard package management tool", long_about = None)]
+#[command(author, version = crate::VERSION, about = "Shard package management tool", long_about = None)]
 pub struct Cli {
     /// Enable verbose output
     #[arg(short, long)]
@@ -146,11 +145,12 @@ pub enum Commands {
     },
 }
 
-pub fn run() -> Result<()> {
+pub fn run() -> ShardResult<()> {
     let cli = Cli::parse();
     
-    // Initialize logger
-    logger::init_logger(cli.verbose)?;
+    // Set verbose level if specified via CLI
+    let verbose_level = if cli.verbose { Some(3) } else { None };
+    init_logging(verbose_level);
     
     match cli.command {
         Commands::Apply { shard, dry_run, skip_cleanup } => {

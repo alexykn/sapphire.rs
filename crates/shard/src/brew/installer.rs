@@ -4,7 +4,7 @@
 //! such as installing, uninstalling, updating, and upgrading packages. It ensures that
 //! all user inputs are properly validated before execution to prevent command injection.
 
-use anyhow::Result;
+use crate::ShardResult;
 use crate::brew::core::BrewCore;
 use crate::brew::validate as validation;
 
@@ -28,7 +28,7 @@ impl BrewInstaller {
     }
     
     /// Add a Homebrew tap
-    pub fn add_tap(&self, tap: &str) -> Result<()> {
+    pub fn add_tap(&self, tap: &str) -> ShardResult<()> {
         // Validate tap name before execution
         let validated_tap = validation::validate_tap_name(tap)?;
         
@@ -37,7 +37,7 @@ impl BrewInstaller {
     }
     
     /// Install a Homebrew formula
-    pub fn install_formula(&self, formula: &str, options: &[String]) -> Result<()> {
+    pub fn install_formula(&self, formula: &str, options: &[String]) -> ShardResult<()> {
         // Validate formula name before execution
         let validated_formula = validation::validate_package_name(formula)?;
         validation::validate_options(options)?;
@@ -50,7 +50,7 @@ impl BrewInstaller {
     }
     
     /// Install a Homebrew cask
-    pub fn install_cask(&self, cask: &str, options: &[String]) -> Result<()> {
+    pub fn install_cask(&self, cask: &str, options: &[String]) -> ShardResult<()> {
         // Validate cask name before execution
         let validated_cask = validation::validate_package_name(cask)?;
         validation::validate_options(options)?;
@@ -63,19 +63,19 @@ impl BrewInstaller {
     }
 
     /// Get a list of all currently installed formulae
-    pub fn get_installed_formulae(&self) -> Result<Vec<String>> {
+    pub fn get_installed_formulae(&self) -> ShardResult<Vec<String>> {
         let output = self.core.execute_brew_command(&["list", "--formula"])?;
         Ok(self.core.parse_list_output(output))
     }
 
     /// Get a list of all currently installed casks
-    pub fn get_installed_casks(&self) -> Result<Vec<String>> {
+    pub fn get_installed_casks(&self) -> ShardResult<Vec<String>> {
         let output = self.core.execute_brew_command(&["list", "--cask"])?;
         Ok(self.core.parse_list_output(output))
     }
 
     /// Get a list of all currently installed taps
-    pub fn get_installed_taps(&self) -> Result<Vec<String>> {
+    pub fn get_installed_taps(&self) -> ShardResult<Vec<String>> {
         let output = self.core.execute_brew_command(&["tap"])?;
         Ok(self.core.parse_list_output(output))
     }
@@ -85,7 +85,7 @@ impl BrewInstaller {
     /// # Security
     ///
     /// All package names are validated individually before execution
-    pub fn batch_install_formulae(&self, formulae: &[String]) -> Result<()> {
+    pub fn batch_install_formulae(&self, formulae: &[String]) -> ShardResult<()> {
         if formulae.is_empty() {
             return Ok(());
         }
@@ -109,7 +109,7 @@ impl BrewInstaller {
     /// # Security
     ///
     /// All cask names are validated individually before execution
-    pub fn batch_install_casks(&self, casks: &[String]) -> Result<()> {
+    pub fn batch_install_casks(&self, casks: &[String]) -> ShardResult<()> {
         if casks.is_empty() {
             return Ok(());
         }
@@ -133,7 +133,7 @@ impl BrewInstaller {
     /// # Security
     ///
     /// All package names are validated individually before execution
-    pub fn batch_upgrade_formulae(&self, formulae: &[String]) -> Result<()> {
+    pub fn batch_upgrade_formulae(&self, formulae: &[String]) -> ShardResult<()> {
         if formulae.is_empty() {
             return Ok(());
         }
@@ -156,7 +156,7 @@ impl BrewInstaller {
     /// # Security
     ///
     /// All cask names are validated individually before execution
-    pub fn batch_upgrade_casks(&self, casks: &[String]) -> Result<()> {
+    pub fn batch_upgrade_casks(&self, casks: &[String]) -> ShardResult<()> {
         if casks.is_empty() {
             return Ok(());
         }
@@ -175,7 +175,7 @@ impl BrewInstaller {
     }
 
     /// Upgrade a formula with custom options
-    pub fn upgrade_formula_with_options(&self, formula: &str, options: &[String]) -> Result<()> {
+    pub fn upgrade_formula_with_options(&self, formula: &str, options: &[String]) -> ShardResult<()> {
         // Validate formula name and options
         let validated_formula = validation::validate_package_name(formula)?;
         validation::validate_options(options)?;
@@ -188,7 +188,7 @@ impl BrewInstaller {
     }
 
     /// Upgrade a cask with custom options
-    pub fn upgrade_cask_with_options(&self, cask: &str, options: &[String]) -> Result<()> {
+    pub fn upgrade_cask_with_options(&self, cask: &str, options: &[String]) -> ShardResult<()> {
         // Validate cask name and options
         let validated_cask = validation::validate_package_name(cask)?;
         validation::validate_options(options)?;
@@ -201,7 +201,7 @@ impl BrewInstaller {
     }
 
     /// Uninstall a formula
-    pub fn uninstall_formula(&self, formula: &str, force: bool) -> Result<()> {
+    pub fn uninstall_formula(&self, formula: &str, force: bool) -> ShardResult<()> {
         // Validate formula name
         let validated_formula = validation::validate_package_name(formula)?;
         
@@ -216,7 +216,7 @@ impl BrewInstaller {
     }
 
     /// Uninstall a cask
-    pub fn uninstall_cask(&self, cask: &str, force: bool) -> Result<()> {
+    pub fn uninstall_cask(&self, cask: &str, force: bool) -> ShardResult<()> {
         // Validate cask name
         let validated_cask = validation::validate_package_name(cask)?;
         
@@ -231,13 +231,13 @@ impl BrewInstaller {
     }
 
     /// Get a list of all packages installed as dependencies
-    pub fn get_dependency_packages(&self) -> Result<Vec<String>> {
+    pub fn get_dependency_packages(&self) -> ShardResult<Vec<String>> {
         let output = self.core.execute_brew_command(&["list", "--installed-as-dependency"])?;
         Ok(self.core.parse_list_output(output))
     }
 
     /// Run cleanup
-    pub fn cleanup(&self, prune_all: bool) -> Result<()> {
+    pub fn cleanup(&self, prune_all: bool) -> ShardResult<()> {
         let mut args = vec!["cleanup"];
         
         if prune_all {

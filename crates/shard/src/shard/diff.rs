@@ -1,15 +1,16 @@
-use anyhow::Result;
+use crate::utils::ShardResult;
+use crate::utils::ShardError;
 use std::path::Path;
 use crate::core::manifest::Manifest;
-use sapphire_core::utils::file_system as fs;
+use crate::utils;
 
 /// Check for differences between manifest and installed packages
-pub fn diff<P: AsRef<Path>>(manifest_path: P) -> Result<()> {
+pub fn diff<P: AsRef<Path>>(manifest_path: P) -> ShardResult<()> {
     let path = manifest_path.as_ref();
     
     // Check if the manifest exists
-    if !fs::path_exists(path) {
-        anyhow::bail!("Manifest file does not exist: {}", path.display());
+    if !utils::path_exists(path) {
+        return Err(ShardError::NotFound(path.display().to_string()));
     }
     
     // Load the manifest

@@ -5,7 +5,8 @@
 //! input validation. Callers are responsible for validating all inputs before passing
 //! them to methods in this module.
 
-use anyhow::{Result, Context};
+use crate::utils::ShardResult;
+use anyhow::Context;
 use std::process::{Command, Child, Stdio};
 use std::fmt::Write;
 use std::time::{Duration, Instant};
@@ -55,7 +56,7 @@ impl BrewCore {
     }
     
     /// Execute a brew command and return its output if successful
-    pub fn execute_brew_command(&self, args: &[&str]) -> Result<std::process::Output> {
+    pub fn execute_brew_command(&self, args: &[&str]) -> ShardResult<std::process::Output> {
         let mut cmd = Command::new(&self.brew_path);
         for arg in args {
             cmd.arg(arg);
@@ -78,7 +79,9 @@ impl BrewCore {
             
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("Error executing brew command {:?}: {}", args, stderr);
+                return Err(crate::utils::ShardError::BrewError(
+                    format!("Error executing brew command {:?}: {}", args, stderr)
+                ));
             }
             
             Ok(output)
@@ -109,7 +112,7 @@ impl BrewCore {
     }
     
     /// Execute a command with a timeout
-    pub fn execute_with_timeout(&self, cmd: &mut Command, timeout_secs: u64) -> Result<std::process::Output> {
+    pub fn execute_with_timeout(&self, cmd: &mut Command, timeout_secs: u64) -> ShardResult<std::process::Output> {
         // Configure the command to capture stdout and stderr
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -140,19 +143,23 @@ impl BrewCore {
                         
                         // Kill the process
                         let _ = child.kill();
-                        anyhow::bail!("Command timed out after {} seconds", timeout_secs);
+                        return Err(crate::utils::ShardError::BrewError(
+                            format!("Command timed out after {} seconds", timeout_secs)
+                        ));
                     }
                     
                     // Sleep briefly to avoid high CPU usage
                     thread::sleep(Duration::from_millis(100));
                 }
-                Err(e) => return Err(anyhow::anyhow!("Error waiting for process: {}", e)),
+                Err(e) => return Err(crate::utils::ShardError::BrewError(
+                    format!("Error waiting for process: {}", e)
+                )),
             }
         }
     }
     
     /// Collect output from a child process
-    pub fn collect_child_output(&self, mut child: Child, status: std::process::ExitStatus) -> Result<std::process::Output> {
+    pub fn collect_child_output(&self, mut child: Child, status: std::process::ExitStatus) -> ShardResult<std::process::Output> {
         // Read stdout and stderr
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -181,7 +188,7 @@ impl BrewCore {
     /// IMPORTANT: This method assumes all inputs (base_args and extra_args) have been
     /// properly validated by the caller. Unvalidated user input should never be passed
     /// directly to this method as it could lead to command injection vulnerabilities.
-    pub fn execute_brew_command_with_args(&self, base_args: &[&str], extra_args: &[&str]) -> Result<std::process::Output> {
+    pub fn execute_brew_command_with_args(&self, base_args: &[&str], extra_args: &[&str]) -> ShardResult<std::process::Output> {
         let mut cmd = Command::new(&self.brew_path);
         
         // Add base arguments
@@ -217,7 +224,9 @@ impl BrewCore {
         
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Error executing command {}: {}", cmd_str, stderr);
+            return Err(crate::utils::ShardError::BrewError(
+                format!("Error executing command {}: {}", cmd_str, stderr)
+            ));
         }
         
         Ok(output)

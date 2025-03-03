@@ -1,7 +1,26 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sapphire_core::logging::logger;
+use tracing::{Level, debug};
+use tracing_subscriber::{fmt, EnvFilter};
 use crate::{apply, diff, init};
+
+// Initialize logging with the specified verbosity level
+fn init_logging(verbose: bool) {
+    let level = if verbose { Level::DEBUG } else { Level::INFO };
+    
+    // Create a custom filter
+    let filter = EnvFilter::from_default_env()
+        .add_directive(format!("fragment={}", level).parse().unwrap());
+    
+    // Initialize the tracing subscriber
+    fmt::Subscriber::builder()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_ansi(true)
+        .init();
+    
+    debug!("Logging initialized at level: {}", level);
+}
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Fragment configuration tool", long_about = None)]
@@ -87,7 +106,7 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
     
     // Initialize logger
-    logger::init_logger(cli.verbose)?;
+    init_logging(cli.verbose);
     
     match cli.command {
         Commands::Apply { path, dry_run } => {

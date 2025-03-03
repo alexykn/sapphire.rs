@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use crate::utils::ShardResult;
 use std::path::Path;
-use anyhow::{Context, Result};
+use anyhow::Context;
 
 /// Package manifest for Shard
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -29,9 +30,17 @@ pub struct Manifest {
 /// Metadata for the manifest
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Metadata {
+    /// Name of the shard
+    #[serde(default)]
+    pub name: String,
+    
     /// Brief description of the shard
     #[serde(default)]
     pub description: String,
+    
+    /// Owner of the shard
+    #[serde(default)]
+    pub owner: String,
     
     /// Whether this shard is protected from modifications
     #[serde(default)]
@@ -108,7 +117,9 @@ impl Manifest {
     pub fn new() -> Self {
         Self {
             metadata: Metadata {
+                name: String::new(),
                 description: "Package manifest".to_string(),
+                owner: String::new(),
                 protected: false,
                 version: "0.1.0".to_string(),
                 allowed_users: Vec::new(),
@@ -129,7 +140,7 @@ impl Manifest {
     }
     
     /// Load a manifest from a file
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> ShardResult<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .with_context(|| format!("Failed to read manifest file: {}", path.as_ref().display()))?;
         
@@ -305,7 +316,7 @@ impl Manifest {
     }
     
     /// Save a manifest to a file
-    pub fn to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn to_file<P: AsRef<Path>>(&self, path: P) -> ShardResult<()> {
         // Create a clean compact manifest for export
         let mut clean_manifest = toml::value::Table::new();
         
@@ -409,5 +420,10 @@ impl Manifest {
     // Stub for backward compatibility - does nothing now
     pub fn update_modification_info(&mut self) {
         // Intentionally empty - no longer tracking modification info
+    }
+    
+    /// Returns whether this manifest is protected
+    pub fn is_protected(&self) -> bool {
+        self.metadata.protected
     }
 }

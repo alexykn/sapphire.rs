@@ -5,13 +5,16 @@ pub mod core;
 pub mod package;
 pub mod brew;
 pub mod shard;
-//pub mod utils;
+pub mod utils;
 
 // CLI handling
 pub mod cli;
 
-// Re-export core functionality
-pub use sapphire_core::{SapphireError, SapphireResult};
+// Re-export error handling and logging
+pub use utils::{
+    ShardError, ShardResult, ResultExt,
+    init_logging, log_success, log_warning, log_error, log_step
+};
 
 // Re-export common types and functions for convenience
 pub use core::manifest;

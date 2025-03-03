@@ -6,12 +6,12 @@ authors = ["Alexander Knott <alexander.knott@posteo.de>"]
 description = "System management tool for macOS"
 
 [dependencies]
-sapphire-core = { path = "../sapphire-core" }
 anyhow = "1.0.96"
 clap = { version = "4.5.31", features = ["derive"] }
 console = "0.15.10"
 dialoguer = "0.11.0"
 tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0.218", features = ["derive"] }
 serde_yaml = "0.9.34"
 toml = "0.8.20"

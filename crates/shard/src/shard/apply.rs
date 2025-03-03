@@ -1,17 +1,18 @@
-use anyhow::{Context, Result};
+use crate::ShardResult;
+use crate::utils::{ShardError, ResultExt};
 use std::path::Path;
 use std::fs;
 use std::io::Write;
 use console::style;
 use shellexpand;
 use crate::core::manifest::{Manifest, PackageState};
-use sapphire_core::utils::file_system as fs_utils;
 use crate::package::processor::{
     PackageType, PackageOperation, PackageProcessor,
     get_installed_formulae, get_installed_casks, get_installed_taps, get_dependency_packages,
     add_tap, run_cleanup, uninstall_package,
     get_all_main_packages
 };
+use crate::utils;
 
 /// Options for applying manifests
 #[derive(Debug, Default, Clone)]
@@ -23,7 +24,7 @@ pub struct ApplyOptions {
 }
 
 /// Process taps defined in a manifest
-fn process_taps(manifest: &Manifest, dry_run: bool) -> Result<()> {
+fn process_taps(manifest: &Manifest, dry_run: bool) -> ShardResult<()> {
     if manifest.taps.is_empty() {
         return Ok(());
     }
@@ -59,7 +60,7 @@ fn process_taps(manifest: &Manifest, dry_run: bool) -> Result<()> {
 }
 
 /// Handle cleanup operations
-fn handle_cleanup(skip_cleanup: bool, dry_run: bool) -> Result<()> {
+fn handle_cleanup(skip_cleanup: bool, dry_run: bool) -> ShardResult<()> {
     if !skip_cleanup {
         if dry_run {
             println!("Would run cleanup");
@@ -73,7 +74,7 @@ fn handle_cleanup(skip_cleanup: bool, dry_run: bool) -> Result<()> {
 }
 
 /// Apply a single manifest
-pub fn apply_internal(manifest: &Manifest, dry_run: bool, skip_cleanup: bool) -> Result<()> {
+pub fn apply_internal(manifest: &Manifest, dry_run: bool, skip_cleanup: bool) -> ShardResult<()> {
     // Internal implementation with default options
     apply_internal_with_options(manifest, dry_run, skip_cleanup, &ApplyOptions::default())
 }
@@ -84,7 +85,7 @@ pub fn apply_internal_with_options(
     dry_run: bool, 
     skip_cleanup: bool,
     options: &ApplyOptions
-) -> Result<()> {
+) -> ShardResult<()> {
     // Process taps
     process_taps(manifest, dry_run)?;
     
@@ -105,7 +106,7 @@ fn process_formulas(
     dry_run: bool,
     is_system_manifest: bool, 
     options: &ApplyOptions
-) -> Result<()> {
+) -> ShardResult<()> {
     // Check if manifest has formulas
     if manifest.formulas.is_empty() && manifest.formulae.is_empty() {
         return Ok(());
@@ -256,7 +257,7 @@ fn process_casks(
     dry_run: bool,
     is_system_manifest: bool, 
     options: &ApplyOptions
-) -> Result<()> {
+) -> ShardResult<()> {
     // Check if manifest has casks
     if manifest.casks.is_empty() && manifest.brews.is_empty() {
         return Ok(());
@@ -402,14 +403,14 @@ fn process_casks(
 }
 
 /// Apply a specific shard manifest file
-pub fn apply(shard: &str, dry_run: bool, skip_cleanup: bool) -> Result<()> {
+pub fn apply(shard: &str, dry_run: bool, skip_cleanup: bool) -> ShardResult<()> {
     // Construct the path to the shard file
     let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
     let manifest_path = format!("{}/{}.toml", shards_dir, shard);
     
     // Check if the file exists
-    if !fs_utils::path_exists(&manifest_path) {
-        anyhow::bail!("Shard file not found: {}", manifest_path);
+    if !utils::path_exists(Path::new(&manifest_path)) {
+        return Err(ShardError::NotFound(shard.to_string()));
     }
     
     // Load the manifest
@@ -421,7 +422,7 @@ pub fn apply(shard: &str, dry_run: bool, skip_cleanup: bool) -> Result<()> {
 }
 
 /// Apply all enabled shards in the shards directory
-pub fn apply_all_enabled_shards(dry_run: bool, skip_cleanup: bool) -> Result<()> {
+pub fn apply_all_enabled_shards(dry_run: bool, skip_cleanup: bool) -> ShardResult<()> {
     // Internal function call with default behavior
     apply_all_enabled_shards_internal(dry_run, skip_cleanup, true)
 }
@@ -431,7 +432,7 @@ fn process_implied_uninstalls(
     processed_formula_names: &[String], 
     processed_cask_names: &[String],
     dry_run: bool
-) -> Result<()> {
+) -> ShardResult<()> {
     if dry_run {
         println!("Would check for implied uninstalls (packages not in any manifest)");
         return Ok(());
@@ -475,14 +476,14 @@ fn process_implied_uninstalls(
 }
 
 /// Internal implementation of apply_all_enabled_shards with control over exit behavior
-fn apply_all_enabled_shards_internal(dry_run: bool, skip_cleanup: bool, should_exit: bool) -> Result<()> {
+fn apply_all_enabled_shards_internal(dry_run: bool, skip_cleanup: bool, should_exit: bool) -> ShardResult<()> {
     println!("{} Applying all enabled shards", style("Sapphire").bold().green());
     
     // Get path to shards directory
     let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
     
     // Check if shards directory exists
-    if !fs_utils::path_exists(&shards_dir) {
+    if !utils::path_exists(Path::new(&shards_dir)) {
         println!("No shards directory found. Nothing to apply.");
         return Ok(());
     }
