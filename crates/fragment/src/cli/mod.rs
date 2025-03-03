@@ -96,10 +96,10 @@ pub fn run() -> Result<()> {
         Commands::Diff { path } => {
             diff::diff(&path)
         },
-        Commands::Init { fragment_type, path, force } => {
+        Commands::Init { fragment_type, path, force: _ } => {
             init::init(&fragment_type, &path)
         },
-        Commands::Config { domain, key, value, r#type } => {
+        Commands::Config { domain, key, value: _, r#type: _ } => {
             // TODO: Implement config functionality
             println!("Setting config for domain {}, key {}", domain, key);
             Ok(())

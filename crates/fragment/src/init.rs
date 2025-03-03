@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use sapphire_core::utils::file_system as fs;
 use crate::parser::{Fragment, FragmentType};
 use serde_yaml::{Mapping, Value};
