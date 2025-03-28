@@ -54,25 +54,33 @@ pub struct ShardManager {
 impl ShardManager {
     /// Create a new shard manager with default paths
     pub fn new() -> ShardResult<Self> {
-        // Expand default paths
         let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
-        let disabled_dir = format!("{}/disabled", shards_dir);
+        let disabled_dir = shellexpand::tilde("~/.sapphire/disabled").to_string();
         let backups_dir = shellexpand::tilde("~/.sapphire/backups").to_string();
         
-        // Get current username for permission checks
-        let current_user = match std::env::var("USER") {
-            Ok(user) => user,
-            Err(_) => "unknown".to_string(),
-        };
+        let shards_dir_path = PathBuf::from(&shards_dir);
+        let disabled_dir_path = PathBuf::from(&disabled_dir);
+        let backups_dir_path = PathBuf::from(&backups_dir);
         
-        log_debug(&format!("Created ShardManager with paths: shards={}, disabled={}, backups={}", 
-            shards_dir, disabled_dir, backups_dir));
+        // Get current username for permission checks
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        
+        // Create directories if they don't exist
+        if !shards_dir_path.exists() {
+            fs::create_dir_all(&shards_dir_path)
+                .with_context(|| format!("Failed to create shards directory: {}", shards_dir_path.display()))?;
+        }
+        
+        if !disabled_dir_path.exists() {
+            fs::create_dir_all(&disabled_dir_path)
+                .with_context(|| format!("Failed to create disabled shards directory: {}", disabled_dir_path.display()))?;
+        }
         
         Ok(Self {
-            shards_dir: PathBuf::from(shards_dir),
-            disabled_dir: PathBuf::from(disabled_dir),
-            backups_dir: PathBuf::from(backups_dir),
-            protected_shards: vec!["system".to_string(), "user".to_string()],
+            shards_dir: shards_dir_path,
+            disabled_dir: disabled_dir_path,
+            backups_dir: backups_dir_path,
+            protected_shards: vec!["system".to_string()], // Only protect system shard by default
             current_user,
         })
     }
@@ -88,7 +96,7 @@ impl ShardManager {
             shards_dir,
             disabled_dir,
             backups_dir: PathBuf::from(backups_dir),
-            protected_shards: vec!["system".to_string(), "user".to_string()],
+            protected_shards: vec!["system".to_string()],
             current_user,
         }
     }
@@ -102,7 +110,7 @@ impl ShardManager {
             shards_dir,
             disabled_dir,
             backups_dir,
-            protected_shards: vec!["system".to_string(), "user".to_string()],
+            protected_shards: vec!["system".to_string()],
             current_user,
         }
     }

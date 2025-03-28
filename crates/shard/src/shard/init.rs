@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::env;
 use console::style;
 use shellexpand;
-use crate::core::manifest::{Manifest, Tap};
+use crate::core::manifest::Manifest;
 use crate::utils::{
     ShardResult, ResultExt, 
     log_success, log_warning, log_step, log_debug,
@@ -73,11 +73,10 @@ fn create_system_shard(path: &PathBuf) -> ShardResult<()> {
     manifest.metadata.name = "system".to_string();
     manifest.metadata.description = "System-level packages".to_string();
     manifest.metadata.protected = true;
-    manifest.metadata.protection_level = 2; // System level protection
     
     // Add some common taps
-    manifest.taps.push(Tap { name: "homebrew/core".to_string() });
-    manifest.taps.push(Tap { name: "homebrew/cask".to_string() });
+    manifest.taps.push("homebrew/core".to_string());
+    manifest.taps.push("homebrew/cask".to_string());
     
     // Write to file
     manifest.to_file(path.to_str().unwrap_or_default())

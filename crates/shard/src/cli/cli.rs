@@ -30,10 +30,6 @@ pub enum Commands {
         #[arg(default_value = "~/.sapphire/shards/user.toml")]
         shard: String,
         
-        /// Dry run without making changes
-        #[arg(short, long)]
-        dry_run: bool,
-        
         /// Skip cleanup after applying
         #[arg(long)]
         skip_cleanup: bool,
@@ -41,7 +37,7 @@ pub enum Commands {
     
     /// Check what would change if a shard was applied
     Diff {
-        /// Path to shard file
+        /// Path to shard file or "all" to check all enabled shards
         #[arg(default_value = "~/.sapphire/shards/user.toml")]
         shard: String,
     },
@@ -106,11 +102,11 @@ pub enum Commands {
         packages: Vec<String>,
         
         /// Force brew formulas (vs casks)
-        #[arg(short, long)]
-        brew: bool,
+        #[arg(long)]
+        formula: bool,
         
         /// Force casks (vs brew formulas)
-        #[arg(short, long)]
+        #[arg(long)]
         cask: bool,
         
         /// Specify which shard to modify (use 'user' for user shard, 'system' for system shard, or a custom shard name)
@@ -118,8 +114,16 @@ pub enum Commands {
         shard: String,
         
         /// Dry run without making changes
-        #[arg(short, long)]
+        #[arg(long)]
         dry_run: bool,
+
+        /// Immediately install *only* the added packages without a full apply
+        #[arg(long, conflicts_with = "apply")]
+        exec: bool,
+
+        /// Immediately run 'apply all' after adding packages to the shard
+        #[arg(long, conflicts_with = "exec")]
+        apply: bool,
     },
     
     /// Remove packages from a shard
@@ -129,11 +133,11 @@ pub enum Commands {
         packages: Vec<String>,
         
         /// Force brew formulas (vs casks)
-        #[arg(short, long)]
-        brew: bool,
+        #[arg(long)]
+        formula: bool,
         
         /// Force casks (vs brew formulas)
-        #[arg(short, long)]
+        #[arg(long)]
         cask: bool,
         
         /// Specify which shard to modify (use 'user' for user shard, 'system' for system shard, or a custom shard name, or 'all' to search all shards)
@@ -141,27 +145,32 @@ pub enum Commands {
         shard: String,
         
         /// Dry run without making changes
-        #[arg(short, long)]
+        #[arg(long)]
         dry_run: bool,
+
+        /// Immediately uninstall *only* the removed packages without a full apply
+        #[arg(long, conflicts_with = "apply")]
+        exec: bool,
+
+        /// Immediately run 'apply all' after removing packages from the shard(s)
+        #[arg(long, conflicts_with = "exec")]
+        apply: bool,
     },
 }
 
 pub fn run() -> ShardResult<()> {
     let cli = Cli::parse();
     
-    // Set verbose level if specified via CLI
-    if cli.verbose {
-        Logger::init(LogLevel::Debug);
-    } else {
-        Logger::init_default();
-    }
+    // Set log level based on verbosity
+    let log_level = if cli.verbose { LogLevel::Debug } else { LogLevel::Info }; // Default to Info
+    Logger::init(log_level);
     
     match cli.command {
-        Commands::Apply { shard, dry_run, skip_cleanup } => {
+        Commands::Apply { shard, skip_cleanup } => {
             if shard.to_lowercase() == "all" {
-                apply::apply_all_enabled_shards(dry_run, skip_cleanup)
+                apply::apply_all_enabled_shards(skip_cleanup)
             } else {
-                apply::apply(&shard, dry_run, skip_cleanup)
+                apply::apply(&shard, skip_cleanup)
             }
         },
         Commands::Diff { shard } => {
@@ -185,11 +194,11 @@ pub fn run() -> ShardResult<()> {
         Commands::Search { query, r#type, deep } => {
             search::search(&query, &r#type, deep)
         },
-        Commands::Add { packages, brew, cask, shard, dry_run } => {
-            package::add_packages(&packages, brew, cask, &shard, dry_run)
+        Commands::Add { packages, formula, cask, shard, dry_run, exec, apply } => {
+            package::add_packages(&packages, formula, cask, &shard, dry_run, exec, apply)
         },
-        Commands::Del { packages, brew, cask, shard, dry_run } => {
-            package::remove_packages(&packages, brew, cask, &shard, dry_run)
+        Commands::Del { packages, formula, cask, shard, dry_run, exec, apply } => {
+            package::remove_packages(&packages, formula, cask, &shard, dry_run, exec, apply)
         },
     }
 } 

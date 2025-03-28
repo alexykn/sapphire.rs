@@ -158,4 +158,9 @@ impl BrewClient {
     pub fn get_cask_info(&self, cask: &str) -> ShardResult<crate::brew::search::CaskInfo> {
         self.searcher.get_cask_info(cask)
     }
+
+    /// Check if a package is available as brew formula and/or cask
+    pub fn check_package_availability(&self, package_name: &str) -> ShardResult<crate::brew::search::PackageAvailability> {
+        self.searcher.check_package_availability(package_name)
+    }
 }

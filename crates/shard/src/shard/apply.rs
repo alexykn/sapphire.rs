@@ -1,750 +1,286 @@
-use crate::ShardResult;
-use crate::utils::{ShardError, ResultExt};
-use std::path::Path;
-use std::fs;
-use std::io::Write;
-use console::style;
-use shellexpand;
+use crate::utils::{ShardResult, ShardError, ResultExt, log_success, log_warning, log_error, log_step, log_debug};
+use crate::package::processor::{PackageProcessor, PackageType};
 use crate::core::manifest::{Manifest, PackageState};
-use crate::package::processor::{
-    PackageType, PackageOperation, PackageProcessor,
-    get_installed_formulae, get_installed_casks, get_installed_taps, get_dependency_packages,
-    add_tap, run_cleanup, uninstall_package,
-    get_all_main_packages
-};
-use crate::utils;
+use crate::brew::{get_client, client::BrewClient};
+use std::path::{Path, PathBuf};
+use std::collections::HashSet;
+use std::fs;
+use shellexpand;
+use crate::utils::filesystem::{path_exists, resolve_manifest_path};
 
-/// Options for applying manifests
+/// Options for applying manifests - SIMPLIFIED
 #[derive(Debug, Default, Clone)]
 pub struct ApplyOptions {
-    /// Whether to allow removal of packages from the system manifest
-    pub allow_system_package_removal: bool,
+    /// If true, only install/upgrade, do not uninstall anything.
+    pub additive_only: bool,
+    /// If true, skip the final `brew cleanup`.
+    pub skip_cleanup: bool,
 }
 
-/// Process taps defined in a manifest
-fn process_taps(manifest: &Manifest, dry_run: bool) -> ShardResult<()> {
-    if manifest.taps.is_empty() {
-        return Ok(());
-    }
-    
-    println!("Processing {} taps...", manifest.taps.len());
-    
-    if dry_run {
-        // Dry run output
-        for tap in &manifest.taps {
-            println!("Would add tap: {}", tap.name);
-        }
-        return Ok(());
-    }
-    
-    // Get currently installed taps
-    let installed_taps = get_installed_taps()
-        .with_context(|| "Failed to retrieve installed taps")?;
-    
-    // Add taps that are not already tapped
-    let taps_to_add: Vec<_> = manifest.taps.iter()
-        .filter(|tap| !installed_taps.contains(&tap.name))
-        .collect();
-    
-    if !taps_to_add.is_empty() {
-        for tap in taps_to_add {
-            add_tap(&tap.name)?;
-        }
-    }
-    
-    Ok(())
-}
+/// Apply a *single* shard manifest file (ADDITIVE ONLY)
+/// Installs/upgrades packages defined in the shard, does NOT uninstall anything.
+pub fn apply_single_shard(shard_name: &str, skip_cleanup: bool) -> ShardResult<()> {
+    log_step(&format!("Applying single shard (additive mode): {}", shard_name));
 
-/// Handle cleanup operations
-fn handle_cleanup(skip_cleanup: bool, dry_run: bool) -> ShardResult<()> {
-    if !skip_cleanup {
-        if dry_run {
-            println!("Would run cleanup");
-        } else {
-            // Use the run_cleanup function instead of direct client call
-            run_cleanup()?;
-        }
-    }
-    
-    Ok(())
-}
+    let manifest_path = resolve_manifest_path(shard_name)?;
+    let manifest_path_obj = Path::new(&manifest_path);
 
-/// Apply a single manifest
-pub fn apply_internal(manifest: &Manifest, dry_run: bool, skip_cleanup: bool) -> ShardResult<()> {
-    // Internal implementation with default options
-    apply_internal_with_options(manifest, dry_run, skip_cleanup, &ApplyOptions::default())
-}
-
-/// Apply a single manifest with custom options
-pub fn apply_internal_with_options(
-    manifest: &Manifest, 
-    dry_run: bool, 
-    skip_cleanup: bool,
-    options: &ApplyOptions
-) -> ShardResult<()> {
-    // Process taps
-    process_taps(manifest, dry_run)?;
-    
-    // Process formulas and casks
-    let is_system_manifest = false; // For single manifest, assume not system manifest
-    process_formulas(manifest, dry_run, is_system_manifest, options)?;
-    process_casks(manifest, dry_run, is_system_manifest, options)?;
-    
-    // Cleanup if not skipped and not dry run
-    handle_cleanup(skip_cleanup, dry_run)?;
-    
-    Ok(())
-}
-
-/// Process formulas defined in a manifest
-fn process_formulas(
-    manifest: &Manifest,
-    dry_run: bool,
-    is_system_manifest: bool, 
-    options: &ApplyOptions
-) -> ShardResult<()> {
-    // Check if manifest has formulas
-    if manifest.formulas.is_empty() && manifest.formulae.is_empty() {
-        return Ok(());
+    if !path_exists(manifest_path_obj) {
+        log_error(&format!("Shard manifest not found: {}", manifest_path));
+        return Err(ShardError::NotFound(shard_name.to_string()));
     }
 
-    // Create a vector to hold all formula information
-    let mut formula_info = Vec::new();
-    
-    // Add detailed formulas first
-    for formula in &manifest.formulas {
-        if formula.state != PackageState::Absent {
-            formula_info.push((
-                formula.name.clone(),
-                formula.state.clone(),
-                formula.options.clone()
-            ));
-        }
-    }
-    
-    // Add simplified formula list (formulae)
-    for formula_name in &manifest.formulae {
-        // Only add if not already in formula_info from the detailed list
-        if !formula_info.iter().any(|(name, _, _)| name == formula_name) {
-            formula_info.push((
-                formula_name.clone(),
-                PackageState::Latest,  // Simplified list implies Latest state
-                Vec::new()  // No options for simplified list
-            ));
-        }
-    }
-    
-    if formula_info.is_empty() {
-        // No formulas to install or upgrade
-        // Check for absent formulas to uninstall
-        let absent_formulas: Vec<String> = manifest.formulas.iter()
-            .filter(|f| f.state == PackageState::Absent)
-            .map(|f| f.name.clone())
-            .collect();
-        
-        if absent_formulas.is_empty() {
-            return Ok(());
-        }
-        
-        println!("Processing {} formulae for removal...", absent_formulas.len());
-        
-        if !is_system_manifest || options.allow_system_package_removal {
-            let installed_packages = get_installed_formulae()?;
-            
-            for formula_name in &absent_formulas {
-                if installed_packages.contains(formula_name) {
-                    if dry_run {
-                        println!("Would uninstall formula: {}", style(formula_name).bold());
-                    } else {
-                        println!("{} formula: {}", 
-                            PackageOperation::Uninstall.as_str(), 
-                            style(formula_name).bold());
-                        uninstall_package(PackageType::Formula, formula_name, true)?;
-                    }
-                }
-            }
-        } else {
-            println!("{} {} {}",
-                style("Skipping uninstall of").yellow(),
-                absent_formulas.len(),
-                style("formulas from system manifest").yellow());
-        }
-        
-        return Ok(());
-    }
-    
-    println!("Processing {} formulae...", formula_info.len());
-    
-    // Create formula processor
-    let formula_processor = PackageProcessor {
-        package_type: PackageType::Formula,
-        installed_packages: get_installed_formulae()?,
-        suppress_messages: true, // Always suppress "already installed" messages
+    let manifest = Manifest::from_file(manifest_path_obj)
+        .with_context(|| format!("Failed to load manifest: {}", manifest_path))?;
+
+    let options = ApplyOptions {
+        additive_only: true, // Force additive mode for single shard apply
+        skip_cleanup,
     };
 
-    // Create SimplePackage objects for processing
-    struct SimplePackage {
-        name: String,
-        state: PackageState,
-        options: Vec<String>,
-    }
-    
-    impl crate::package::processor::PackageInfo for SimplePackage {
-        fn state(&self) -> PackageState {
-            self.state.clone()
-        }
-        
-        fn options(&self) -> &[String] {
-            &self.options
-        }
-        
-        fn name(&self) -> &str {
-            &self.name
-        }
-    }
-    
-    let formula_packages: Vec<SimplePackage> = formula_info
-        .into_iter()
-        .map(|(name, state, options)| SimplePackage { name, state, options })
-        .collect();
-        
-    // Process packages with the processor
-    let process_result = formula_processor.process_packages(&formula_packages)?;
-    formula_processor.execute_operations(&process_result, dry_run)?;
-    
-    // Process "absent" formulas separately
-    let absent_formulas: Vec<String> = manifest.formulas.iter()
-        .filter(|f| f.state == PackageState::Absent)
-        .map(|f| f.name.clone())
-        .collect();
-    
-    if !absent_formulas.is_empty() {
-        if !is_system_manifest || options.allow_system_package_removal {
-            for formula_name in &absent_formulas {
-                if formula_processor.installed_packages.contains(formula_name) {
-                    if dry_run {
-                        println!("Would uninstall formula: {}", style(formula_name).bold());
-                    } else {
-                        println!("{} formula: {}", 
-                            PackageOperation::Uninstall.as_str(), 
-                            style(formula_name).bold());
-                        uninstall_package(PackageType::Formula, formula_name, true)?;
-                    }
-                }
-            }
-        } else {
-            println!("{} {} {}",
-                style("Skipping uninstall of").yellow(),
-                absent_formulas.len(),
-                style("formulas from system manifest").yellow());
-        }
-    }
-    
-    Ok(())
+    // Call the internal apply function
+    apply_manifest(&manifest, &options)
 }
 
-/// Process casks defined in a manifest
-fn process_casks(
-    manifest: &Manifest,
-    dry_run: bool,
-    is_system_manifest: bool, 
-    options: &ApplyOptions
-) -> ShardResult<()> {
-    // Check if manifest has casks
-    if manifest.casks.is_empty() && manifest.brews.is_empty() {
+/// Apply *all* enabled shards (SYNCHRONIZING)
+/// Installs/upgrades packages from all shards, uninstalls packages not in any enabled shard.
+pub fn apply_all_enabled_shards(skip_cleanup: bool) -> ShardResult<()> {
+    log_step("Applying all enabled shards (synchronizing)");
+
+    let shards_dir_path = PathBuf::from(shellexpand::tilde("~/.sapphire/shards").into_owned());
+
+    if !path_exists(&shards_dir_path) {
+        log_warning("Shards directory (~/.sapphire/shards) not found. Nothing to apply.");
         return Ok(());
     }
 
-    // Create a vector to hold all cask information
-    let mut cask_info = Vec::new();
-    
-    // Add detailed casks first
-    for cask in &manifest.casks {
-        if cask.state != PackageState::Absent {
-            cask_info.push((
-                cask.name.clone(),
-                cask.state.clone(),
-                cask.options.clone()
-            ));
-        }
-    }
-    
-    // Add simplified cask list (brews)
-    for cask_name in &manifest.brews {
-        // Only add if not already in cask_info from the detailed list
-        if !cask_info.iter().any(|(name, _, _)| name == cask_name) {
-            cask_info.push((
-                cask_name.clone(),
-                PackageState::Latest,  // Simplified list implies Latest state
-                Vec::new()  // No options for simplified list
-            ));
-        }
-    }
-    
-    if cask_info.is_empty() {
-        // No casks to install or upgrade
-        // Check for absent casks to uninstall
-        let absent_casks: Vec<String> = manifest.casks.iter()
-            .filter(|c| c.state == PackageState::Absent)
-            .map(|c| c.name.clone())
-            .collect();
-        
-        if absent_casks.is_empty() {
-            return Ok(());
-        }
-        
-        println!("Processing {} casks for removal...", absent_casks.len());
-        
-        if !is_system_manifest || options.allow_system_package_removal {
-            let installed_packages = get_installed_casks()?;
-            
-            for cask_name in &absent_casks {
-                if installed_packages.contains(cask_name) {
-                    if dry_run {
-                        println!("Would uninstall cask: {}", style(cask_name).bold());
-                    } else {
-                        println!("{} cask: {}", 
-                            PackageOperation::Uninstall.as_str(), 
-                            style(cask_name).bold());
-                        uninstall_package(PackageType::Cask, cask_name, true)?;
-                    }
-                }
-            }
-        } else {
-            println!("{} {} {}",
-                style("Skipping uninstall of").yellow(),
-                absent_casks.len(),
-                style("casks from system manifest").yellow());
-        }
-        
-        return Ok(());
-    }
-    
-    println!("Processing {} casks...", cask_info.len());
-    
-    // Create cask processor
-    let cask_processor = PackageProcessor {
-        package_type: PackageType::Cask,
-        installed_packages: get_installed_casks()?,
-        suppress_messages: true, // Always suppress "already installed" messages
-    };
-
-    // Create SimplePackage objects for processing
-    struct SimplePackage {
-        name: String,
-        state: PackageState,
-        options: Vec<String>,
-    }
-    
-    impl crate::package::processor::PackageInfo for SimplePackage {
-        fn state(&self) -> PackageState {
-            self.state.clone()
-        }
-        
-        fn options(&self) -> &[String] {
-            &self.options
-        }
-        
-        fn name(&self) -> &str {
-            &self.name
-        }
-    }
-    
-    let cask_packages: Vec<SimplePackage> = cask_info
-        .into_iter()
-        .map(|(name, state, options)| SimplePackage { name, state, options })
-        .collect();
-        
-    // Process packages with the processor
-    let process_result = cask_processor.process_packages(&cask_packages)?;
-    cask_processor.execute_operations(&process_result, dry_run)?;
-    
-    // Process "absent" casks separately
-    let absent_casks: Vec<String> = manifest.casks.iter()
-        .filter(|c| c.state == PackageState::Absent)
-        .map(|c| c.name.clone())
-        .collect();
-    
-    if !absent_casks.is_empty() {
-        if !is_system_manifest || options.allow_system_package_removal {
-            for cask_name in &absent_casks {
-                if cask_processor.installed_packages.contains(cask_name) {
-                    if dry_run {
-                        println!("Would uninstall cask: {}", style(cask_name).bold());
-                    } else {
-                        println!("{} cask: {}", 
-                            PackageOperation::Uninstall.as_str(), 
-                            style(cask_name).bold());
-                        uninstall_package(PackageType::Cask, cask_name, true)?;
-                    }
-                }
-            }
-        } else {
-            println!("{} {} {}",
-                style("Skipping uninstall of").yellow(),
-                absent_casks.len(),
-                style("casks from system manifest").yellow());
-        }
-    }
-    
-    Ok(())
-}
-
-/// Apply a specific shard manifest file
-pub fn apply(shard: &str, dry_run: bool, skip_cleanup: bool) -> ShardResult<()> {
-    // Construct the path to the shard file
-    let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
-    let manifest_path = format!("{}/{}.toml", shards_dir, shard);
-    
-    // Check if the file exists
-    if !utils::path_exists(Path::new(&manifest_path)) {
-        return Err(ShardError::NotFound(shard.to_string()));
-    }
-    
-    // Load the manifest
-    let manifest = Manifest::from_file(Path::new(&manifest_path))
-        .with_context(|| format!("Failed to load manifest file: {}", manifest_path))?;
-    
-    // Apply the manifest
-    apply_internal(&manifest, dry_run, skip_cleanup)
-}
-
-/// Apply all enabled shards in the shards directory
-pub fn apply_all_enabled_shards(dry_run: bool, skip_cleanup: bool) -> ShardResult<()> {
-    // Internal function call with default behavior
-    apply_all_enabled_shards_internal(dry_run, skip_cleanup, true)
-}
-
-/// Process implied uninstalls for packages not present in any manifest
-fn process_implied_uninstalls(
-    processed_formula_names: &[String], 
-    processed_cask_names: &[String],
-    dry_run: bool
-) -> ShardResult<()> {
-    if dry_run {
-        println!("Would check for implied uninstalls (packages not in any manifest)");
-        return Ok(());
-    }
-    
-    // Get the list of main packages (explicitly installed, not dependencies)
-    let (main_formulae, main_casks) = get_all_main_packages()
-        .with_context(|| "Failed to retrieve main packages")?;
-    
-    // Find formulae to uninstall
-    let formulae_to_uninstall: Vec<_> = main_formulae.iter()
-        .filter(|name| !processed_formula_names.contains(name))
-        .collect();
-    
-    // Find casks to uninstall
-    let casks_to_uninstall: Vec<_> = main_casks.iter()
-        .filter(|name| !processed_cask_names.contains(name))
-        .collect();
-    
-    // Process formulae uninstallation
-    if !formulae_to_uninstall.is_empty() {
-        println!("Uninstalling {} formulae not present in any enabled shard...", 
-            formulae_to_uninstall.len());
-        
-        for name in formulae_to_uninstall {
-            uninstall_package(PackageType::Formula, name, true)?;
-        }
-    }
-    
-    // Process casks uninstallation
-    if !casks_to_uninstall.is_empty() {
-        println!("Uninstalling {} casks not present in any enabled shard...", 
-            casks_to_uninstall.len());
-        
-        for name in casks_to_uninstall {
-            uninstall_package(PackageType::Cask, name, true)?;
-        }
-    }
-    
-    Ok(())
-}
-
-/// Internal implementation of apply_all_enabled_shards with control over exit behavior
-fn apply_all_enabled_shards_internal(dry_run: bool, skip_cleanup: bool, should_exit: bool) -> ShardResult<()> {
-    println!("{} Applying all enabled shards", style("Sapphire").bold().green());
-    
-    // Get path to shards directory
-    let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
-    
-    // Check if shards directory exists
-    if !utils::path_exists(Path::new(&shards_dir)) {
-        println!("No shards directory found. Nothing to apply.");
-        return Ok(());
-    }
-    
-    // Read all yaml files in the directory
-    let entries = fs::read_dir(&shards_dir)
-        .with_context(|| format!("Failed to read shards directory: {}", shards_dir))?;
-    
-    // Collect paths to process
-    let shard_paths: Vec<_> = entries
-        .filter_map(|entry_result| {
-            entry_result.ok().and_then(|entry| {
-                let path = entry.path();
-                // Keep only non-directory toml files
-                if path.is_dir() || path.extension().map_or(true, |ext| ext != "toml") {
-                    None
-                } else {
-                    Some(path)
-                }
-            })
-        })
-        .collect();
-    
-    // Sort by filename to ensure consistent order
-    let mut sorted_paths = shard_paths.clone();
-    sorted_paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-    
-    if sorted_paths.is_empty() {
-        println!("No shards found in directory. Nothing to apply.");
-        return Ok(());
-    }
-    
-    // Get lists of currently installed packages
-    println!("Gathering currently installed packages...");
-    let installed_formulae = get_installed_formulae()
-        .with_context(|| "Failed to retrieve installed formulae")?;
-    let installed_casks = get_installed_casks()
-        .with_context(|| "Failed to retrieve installed casks")?;
-    
-    // Create package processors with message suppression
-    let formula_processor = PackageProcessor::new(
-        PackageType::Formula, 
-        installed_formulae.clone(), 
-        true  // Suppress "already installed" messages
-    );
-    
-    let cask_processor = PackageProcessor::new(
-        PackageType::Cask, 
-        installed_casks.clone(), 
-        true  // Suppress "already installed" messages
-    );
-    
-    // Load all manifests and collect desired packages
-    println!("Loading shard manifests...");
-    
-    // Create structures to hold package information
+    // --- 1. Collect all manifests and desired state ---
     let mut all_manifests = Vec::new();
-    let mut desired_taps = Vec::new();
-    let mut formula_info = Vec::new();
-    let mut cask_info = Vec::new();
-    
-    // Process each manifest
-    for path in &sorted_paths {
-        let manifest = Manifest::from_file(path)
-            .with_context(|| format!("Failed to load manifest file: {}", path.display()))?;
-        
-        // Collect taps
-        desired_taps.extend(manifest.taps.iter().map(|tap| tap.name.clone()));
-        
-        // Collect formulae
-        for formula in &manifest.formulas {
-            if formula.state != PackageState::Absent {
-                formula_info.push((
-                    formula.name.clone(), 
-                    formula.state.clone(), 
-                    formula.options.clone()
-                ));
+    let mut desired_taps = HashSet::new();
+    let mut desired_formulae = HashSet::new();
+    let mut desired_casks = HashSet::new();
+
+    let entries = fs::read_dir(&shards_dir_path)
+        .with_context(|| format!("Failed to read shards directory: {}", shards_dir_path.display()))?;
+
+    let mut shard_files = Vec::new();
+    for entry_res in entries {
+        if let Ok(entry) = entry_res {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+                shard_files.push(path);
             }
         }
-        
-        // Collect casks
-        for cask in &manifest.casks {
-            if cask.state != PackageState::Absent {
-                cask_info.push((
-                    cask.name.clone(), 
-                    cask.state.clone(), 
-                    cask.options.clone()
-                ));
-            }
-        }
-        
-        all_manifests.push(manifest);
     }
-    
-    // Remove duplicates from desired taps
-    desired_taps.sort();
-    desired_taps.dedup();
-    
-    // Helper function to deduplicate packages with priority for Latest state
-    fn deduplicate_packages(
-        packages: Vec<(String, PackageState, Vec<String>)>
-    ) -> Vec<(String, PackageState, Vec<String>)> {
-        let mut result = Vec::new();
-        let mut processed_names = Vec::new();
-        
-        for (name, state, options) in packages {
-            match processed_names.iter().position(|n| n == &name) {
-                None => {
-                    // First time seeing this package
-                    processed_names.push(name.clone());
-                    result.push((name, state, options));
-                },
-                Some(idx) => {
-                    // Already have this package
-                    // Update if new state is Latest and current isn't
-                    if state == PackageState::Latest && result[idx].1 != PackageState::Latest {
-                        result[idx].1 = PackageState::Latest;
-                        // Also update options if they exist
-                        if !options.is_empty() {
-                            result[idx].2 = options;
-                        }
-                    }
-                }
+    shard_files.sort(); // Consistent order
+
+    if shard_files.is_empty() {
+        log_warning("No shard files (.toml) found in shards directory. Nothing to apply.");
+        return Ok(());
+    }
+
+    log_debug(&format!("Found {} shard file(s). Loading manifests...", shard_files.len()));
+
+    for path in &shard_files {
+        match Manifest::from_file(path) {
+            Ok(manifest) => {
+                log_debug(&format!("Loaded shard: {}", path.display()));
+                
+                // Collect taps (from both simple and structured formats)
+                manifest.taps.iter().for_each(|tap_name| { desired_taps.insert(tap_name.clone()); });
+                manifest.taps_structured.iter().for_each(|tap| { desired_taps.insert(tap.name.clone()); });
+
+                // Collect formulae (from both simple and structured formats)
+                manifest.formulae.iter().for_each(|formula_name| { desired_formulae.insert(formula_name.clone()); });
+                manifest.formulas.iter()
+                    .filter(|f| f.state != PackageState::Absent) // Skip explicitly absent packages
+                    .for_each(|f| { desired_formulae.insert(f.name.clone()); });
+
+                // Collect casks (from both simple and structured formats)
+                manifest.casks.iter().for_each(|cask_name| { desired_casks.insert(cask_name.clone()); });
+                manifest.casks_structured.iter()
+                    .filter(|c| c.state != PackageState::Absent) // Skip explicitly absent packages
+                    .for_each(|c| { desired_casks.insert(c.name.clone()); });
+
+                all_manifests.push(manifest);
+            }
+            Err(e) => {
+                log_warning(&format!("Skipping invalid manifest file {}: {}", path.display(), e));
             }
         }
-        
-        result
     }
+
+    if all_manifests.is_empty() {
+        log_warning("No valid manifests loaded. Nothing to apply.");
+        return Ok(());
+    }
+
+    // --- 2. Create a single "virtual" manifest representing the combined desired state ---
+    let mut combined_manifest = Manifest::new();
+    combined_manifest.taps = desired_taps.into_iter().collect();
+    combined_manifest.taps.sort(); // Sort for consistent output
     
-    // Deduplicate the package lists
-    let unique_formulae = deduplicate_packages(formula_info);
-    let unique_casks = deduplicate_packages(cask_info);
+    combined_manifest.formulae = desired_formulae.into_iter().collect();
+    combined_manifest.formulae.sort(); // Sort for consistent output
     
-    // Extract the names of desired packages for later reference
-    let processed_formula_names: Vec<String> = unique_formulae.iter()
-        .map(|(name, _, _)| name.clone())
-        .collect();
-    
-    let processed_cask_names: Vec<String> = unique_casks.iter()
-        .map(|(name, _, _)| name.clone())
-        .collect();
-    
-    // Process taps
-    if !desired_taps.is_empty() {
-        println!("Processing {} taps...", desired_taps.len());
+    combined_manifest.casks = desired_casks.into_iter().collect();
+    combined_manifest.casks.sort(); // Sort for consistent output
+
+    // --- 3. Apply the combined manifest ---
+    let options = ApplyOptions {
+        additive_only: false, // Allow uninstalls for 'apply all'
+        skip_cleanup,
+    };
+    apply_manifest(&combined_manifest, &options)?;
+
+    log_success(&format!("Applied {} shards successfully.", all_manifests.len()));
+
+    Ok(())
+}
+
+/// Internal function to apply a given manifest state (can be combined or single)
+fn apply_manifest(manifest: &Manifest, options: &ApplyOptions) -> ShardResult<()> {
+    let brew_client = get_client();
+
+    // --- 1. Process Taps ---
+    if !manifest.taps.is_empty() {
+        log_step(&format!("Processing {} taps...", manifest.taps.len()));
+        let installed_taps = brew_client.get_installed_taps()?.into_iter().collect::<HashSet<_>>();
         
-        if !dry_run {
-            // Get currently installed taps
-            let installed_taps = get_installed_taps()
-                .with_context(|| "Failed to retrieve installed taps")?;
-            
-            for tap in &desired_taps {
-                if !installed_taps.contains(tap) {
-                    add_tap(tap)?;
-                } 
+        for tap in &manifest.taps {
+            if !installed_taps.contains(tap) {
+                brew_client.add_tap(tap)?;
+            }
+        }
+    }
+
+    // --- 2. Process Formulas & Casks ---
+    log_debug("Gathering current system state...");
+    let installed_formulae = brew_client.get_installed_formulae()?;
+    let installed_casks = brew_client.get_installed_casks()?;
+
+    // Create processors
+    let formula_processor = PackageProcessor::new(PackageType::Formula, installed_formulae.clone(), true);
+    let cask_processor = PackageProcessor::new(PackageType::Cask, installed_casks.clone(), true);
+
+    // Process packages using the processors
+    log_step(&format!("Processing {} formulae...", manifest.formulae.len()));
+    let formula_ops = formula_processor.process_packages(&manifest.formulae)?;
+    formula_processor.execute_operations(&formula_ops, false)?; // false = no dry run
+
+    log_step(&format!("Processing {} casks...", manifest.casks.len()));
+    let cask_ops = cask_processor.process_packages(&manifest.casks)?;
+    cask_processor.execute_operations(&cask_ops, false)?; // false = no dry run
+
+    // --- 3. Process Implied Uninstalls (only if not additive) ---
+    if !options.additive_only {
+        log_step("Checking for packages to uninstall (not present in any shard)...");
+
+        // Get all *main* packages currently installed (exclude dependencies)
+        let (main_formulae, main_casks) = get_all_main_packages(&brew_client)?;
+
+        // Identify formulae defined in the manifest - consider all forms
+        let mut desired_formulae_names = HashSet::new();
+        desired_formulae_names.extend(manifest.formulae.iter().map(|s| s.as_str()));
+        desired_formulae_names.extend(manifest.formulas.iter().filter_map(|f| {
+            if f.state != PackageState::Absent { Some(f.name.as_str()) } else { None }
+        }));
+
+        // Identify casks defined in the manifest - consider all forms
+        let mut desired_casks_names = HashSet::new();
+        desired_casks_names.extend(manifest.casks.iter().map(|s| s.as_str()));
+        desired_casks_names.extend(manifest.casks_structured.iter().filter_map(|c| {
+            if c.state != PackageState::Absent { Some(c.name.as_str()) } else { None }
+        }));
+
+        // Get system dependencies to protect them
+        let dependency_packages = brew_client.get_dependency_packages()?;
+        let dependency_set: HashSet<&str> = dependency_packages.iter().map(|s| s.as_str()).collect();
+
+        // Create a safe list of packages that shouldn't be uninstalled
+        let critical_packages = vec!["git", "brew", "curl", "openssl", "python", "fish", "bash", "zsh"];
+        let critical_set: HashSet<&str> = critical_packages.iter().copied().collect();
+
+        // Find formulae to uninstall: not in manifest, not a dependency, not critical
+        let formulae_to_uninstall: Vec<_> = main_formulae.iter()
+            .filter(|name| {
+                !desired_formulae_names.contains(name.as_str()) && 
+                !dependency_set.contains(name.as_str()) &&
+                !critical_set.contains(name.as_str())
+            })
+            .cloned()
+            .collect();
+
+        // Find casks to uninstall: not in manifest, not critical
+        let casks_to_uninstall: Vec<_> = main_casks.iter()
+            .filter(|name| {
+                !desired_casks_names.contains(name.as_str()) && 
+                !critical_set.contains(name.as_str())
+            })
+            .cloned()
+            .collect();
+
+        if !formulae_to_uninstall.is_empty() {
+            log_debug(&format!("Found {} formulae to uninstall: {}", formulae_to_uninstall.len(), formulae_to_uninstall.join(", ")));
+            for name in formulae_to_uninstall {
+                log_debug(&format!("Uninstalling formula: {}", name));
+                // Use BrewClient directly
+                brew_client.uninstall_formula(&name, true).unwrap_or_else(|e| 
+                    log_error(&format!("Failed uninstalling formula {}: {}", name, e))
+                );
             }
         } else {
-            for tap in &desired_taps {
-                println!("Would add tap: {}", tap);
+            log_debug("No extra formulae found to uninstall.");
+        }
+
+        if !casks_to_uninstall.is_empty() {
+            log_debug(&format!("Found {} casks to uninstall: {}", casks_to_uninstall.len(), casks_to_uninstall.join(", ")));
+            for name in casks_to_uninstall {
+                log_debug(&format!("Uninstalling cask: {}", name));
+                brew_client.uninstall_cask(&name, true).unwrap_or_else(|e| 
+                    log_error(&format!("Failed uninstalling cask {}: {}", name, e))
+                );
             }
+        } else {
+            log_debug("No extra casks found to uninstall.");
         }
+    } else {
+        log_debug("Additive mode: Skipping uninstallation of packages not in manifest.");
     }
-    
-    // Create package objects for formulae and casks to work with the processor
-    struct SimplePackage {
-        name: String,
-        state: PackageState,
-        options: Vec<String>,
+
+    // --- 4. Cleanup ---
+    if !options.skip_cleanup {
+        brew_client.cleanup(true)?; // true for prune_all
+    } else {
+        log_debug("Skipping cleanup step.");
     }
-    
-    impl crate::package::processor::PackageInfo for SimplePackage {
-        fn state(&self) -> PackageState {
-            self.state.clone()
-        }
-        
-        fn options(&self) -> &[String] {
-            &self.options
-        }
-        
-        fn name(&self) -> &str {
-            &self.name
-        }
-    }
-    
-    let formula_packages: Vec<SimplePackage> = unique_formulae
-        .into_iter()
-        .map(|(name, state, options)| SimplePackage { name, state, options })
-        .collect();
-    
-    let cask_packages: Vec<SimplePackage> = unique_casks
-        .into_iter()
-        .map(|(name, state, options)| SimplePackage { name, state, options })
-        .collect();
-    
-    // Process packages with the processors
-    if !formula_packages.is_empty() {
-        println!("Processing {} formulae...", formula_packages.len());
-        let formula_result = formula_processor.process_packages(&formula_packages)?;
-        formula_processor.execute_operations(&formula_result, dry_run)?;
-    }
-    
-    if !cask_packages.is_empty() {
-        println!("Processing {} casks...", cask_packages.len());
-        let cask_result = cask_processor.process_packages(&cask_packages)?;
-        cask_processor.execute_operations(&cask_result, dry_run)?;
-    }
-    
-    // Display active packages
-    println!("{} Using these packages from enabled shards:", style("ℹ").bold().blue());
-    
-    // Show taps
-    if !desired_taps.is_empty() {
-        println!("  {}", style("Active Taps:").bold());
-        for tap in &desired_taps {
-            println!("    - {}", style(tap).bold());
-        }
-    }
-    
-    // Show active formulae
-    if !processed_formula_names.is_empty() {
-        // Get dependency packages
-        let dependency_packages = get_dependency_packages()
-            .with_context(|| "Failed to retrieve dependency packages")?;
-        
-        println!("  {}", style("Active Formulae:").bold());
-        for formula in &processed_formula_names {
-            if !dependency_packages.contains(formula) {
-                let state_info = formula_packages.iter()
-                    .find(|pkg| pkg.name == *formula)
-                    .map(|pkg| if pkg.state == PackageState::Latest { "(latest)" } else { "" })
-                    .unwrap_or("");
-                println!("    - {} {}", style(formula).bold(), state_info);
-            }
-        }
-    }
-    
-    // Show active casks
-    if !processed_cask_names.is_empty() {
-        println!("  {}", style("Active Casks:").bold());
-        for cask in &processed_cask_names {
-            let state_info = cask_packages.iter()
-                .find(|pkg| pkg.name == *cask)
-                .map(|pkg| if pkg.state == PackageState::Latest { "(latest)" } else { "" })
-                .unwrap_or("");
-            println!("    - {} {}", style(cask).bold(), state_info);
-        }
-    }
-    
-    // Process implied uninstalls
-    process_implied_uninstalls(&processed_formula_names, &processed_cask_names, dry_run)?;
-    
-    // Final cleanup if not skipped and not dry run
-    handle_cleanup(skip_cleanup, dry_run)?;
-    
-    let total_shards = sorted_paths.len();
-    println!("\n{} Applied {} shards successfully", 
-        style("✓").bold().green(), total_shards);
-    
-    std::io::stdout().flush()
-        .with_context(|| "Failed to flush stdout")?;
-    
-    // Final completion message
-    println!("\n{} All operations complete - exiting", style("✓").bold().green());
-    std::io::stdout().flush()
-        .with_context(|| "Failed to flush stdout")?;
-    
-    // Force exit the process to ensure termination, but only when called directly
-    if !dry_run && should_exit {
-        // Use a more reliable approach to ensure we exit
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        // Force exit to ensure termination
-        std::process::exit(0);
-    }
-    
+
     Ok(())
+}
+
+/// Helper function to get main packages (non-dependencies)
+fn get_all_main_packages(brew_client: &BrewClient) -> ShardResult<(Vec<String>, Vec<String>)> {
+    let installed_formulae = brew_client.get_installed_formulae()?;
+    let installed_casks = brew_client.get_installed_casks()?;
+    let dependency_packages = brew_client.get_dependency_packages()?;
+    
+    // Filter out dependencies from installed formulae
+    let main_formulae: Vec<String> = installed_formulae
+        .into_iter()
+        .filter(|name| !dependency_packages.contains(name))
+        .collect();
+    
+    // Casks are never dependencies
+    let main_casks = installed_casks;
+    
+    Ok((main_formulae, main_casks))
+}
+
+/// Apply a manifest (backwards compatibility function)
+pub fn apply(shard: &str, skip_cleanup: bool) -> ShardResult<()> {
+    if shard.eq_ignore_ascii_case("all") {
+        apply_all_enabled_shards(skip_cleanup)
+    } else {
+        apply_single_shard(shard, skip_cleanup)
+    }
 }

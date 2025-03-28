@@ -2,26 +2,35 @@ use serde::{Deserialize, Serialize};
 use crate::utils::ShardResult;
 use std::path::Path;
 use anyhow::Context;
+use crate::utils::filesystem;
+use crate::utils::log_debug;
 
 /// Package manifest for Shard
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Manifest {
-    #[serde(default)]
-    pub formulas: Vec<Formula>,
-    
-    #[serde(default)]
-    pub casks: Vec<Cask>,
-    
-    #[serde(default)]
-    pub taps: Vec<Tap>,
-
-    /// Simplified formula list as strings
+    /// Array of formula names - preferred over structured formulas
     #[serde(default)]
     pub formulae: Vec<String>,
-
-    /// Simplified cask list as strings  
+    
+    /// Array of cask names - preferred over structured casks
     #[serde(default)]
-    pub brews: Vec<String>,
+    pub casks: Vec<String>,
+    
+    /// Array of tap names - preferred over structured taps
+    #[serde(default)]
+    pub taps: Vec<String>,
+    
+    /// Legacy structured formulas representation
+    #[serde(default, skip_serializing)]
+    pub formulas: Vec<Formula>,
+    
+    /// Legacy structured casks representation
+    #[serde(default, skip_serializing)]
+    pub casks_structured: Vec<Cask>,
+    
+    /// Legacy structured taps representation
+    #[serde(default, skip_serializing)]
+    pub taps_structured: Vec<Tap>,
     
     #[serde(default)]
     pub metadata: Metadata,
@@ -54,8 +63,8 @@ pub struct Metadata {
     #[serde(default)]
     pub allowed_users: Vec<String>,
     
-    /// Protection level (0-3) with 0 being unprotected and 3 being system level
-    #[serde(default)]
+    /// DEPRECATED: Protection level (use 'protected' boolean instead)
+    #[serde(default, skip_serializing)]
     pub protection_level: u8,
 }
 
@@ -68,7 +77,7 @@ pub enum PackageState {
     Latest,
 }
 
-/// Homebrew formula
+/// Homebrew formula - legacy format
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Formula {
     pub name: String,
@@ -83,7 +92,7 @@ pub struct Formula {
     pub state: PackageState,
 }
 
-/// Homebrew cask
+/// Homebrew cask - legacy format
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Cask {
     pub name: String,
@@ -98,7 +107,7 @@ pub struct Cask {
     pub state: PackageState,
 }
 
-/// Homebrew tap
+/// Homebrew tap - legacy format
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tap {
     pub name: String,
@@ -109,7 +118,7 @@ fn default_version() -> String {
 }
 
 fn default_state() -> PackageState {
-    PackageState::Present
+    PackageState::Latest
 }
 
 impl Manifest {
@@ -125,11 +134,12 @@ impl Manifest {
                 allowed_users: Vec::new(),
                 protection_level: 0,
             },
-            formulas: Vec::new(),
+            formulae: Vec::new(),
             casks: Vec::new(),
             taps: Vec::new(),
-            formulae: Vec::new(),
-            brews: Vec::new(),
+            formulas: Vec::new(),
+            casks_structured: Vec::new(),
+            taps_structured: Vec::new(),
         }
     }
     
@@ -141,289 +151,106 @@ impl Manifest {
     
     /// Load a manifest from a file
     pub fn from_file<P: AsRef<Path>>(path: P) -> ShardResult<Self> {
+        log_debug(&format!("Loading manifest from: {}", path.as_ref().display()));
         let content = std::fs::read_to_string(path.as_ref())
             .with_context(|| format!("Failed to read manifest file: {}", path.as_ref().display()))?;
         
-        // Parse the TOML content into a generic Value first
-        let parsed_content = toml::from_str::<toml::Value>(&content)
+        // Parse the TOML content
+        let mut parsed: Manifest = toml::from_str(&content)
             .with_context(|| format!("Failed to parse manifest file: {}", path.as_ref().display()))?;
+            
+        // Handle migration between the different formats
         
-        // Create an empty manifest
-        let mut manifest = Manifest::new();
-        
-        // Process metadata if present
-        if let Some(metadata) = parsed_content.get("metadata") {
-            if let Some(metadata_table) = metadata.as_table() {
-                if let Some(description) = metadata_table.get("description").and_then(|v| v.as_str()) {
-                    manifest.metadata.description = description.to_string();
-                }
-                if let Some(protected) = metadata_table.get("protected").and_then(|v| v.as_bool()) {
-                    manifest.metadata.protected = protected;
-                }
-                if let Some(version) = metadata_table.get("version").and_then(|v| v.as_str()) {
-                    manifest.metadata.version = version.to_string();
-                }
-                if let Some(allowed_users) = metadata_table.get("allowed_users").and_then(|v| v.as_array()) {
-                    for user in allowed_users {
-                        if let Some(user_str) = user.as_str() {
-                            manifest.metadata.allowed_users.push(user_str.to_string());
-                        }
-                    }
-                }
-                if let Some(protection_level) = metadata_table.get("protection_level").and_then(|v| v.as_integer()) {
-                    manifest.metadata.protection_level = protection_level as u8;
+        // 1. Check if we have structured formulas but no simple formulae array
+        if !parsed.formulas.is_empty() && parsed.formulae.is_empty() {
+            // Migrate to simple format
+            for formula in &parsed.formulas {
+                if !parsed.formulae.contains(&formula.name) {
+                    parsed.formulae.push(formula.name.clone());
                 }
             }
         }
         
-        // Process taps - handle both formats
-        if let Some(taps_value) = parsed_content.get("taps") {
-            // Format 1: Simple array of strings
-            if let Some(tap_strings) = taps_value.as_array() {
-                for tap in tap_strings {
-                    if let Some(tap_str) = tap.as_str() {
-                        manifest.taps.push(Tap {
-                            name: tap_str.to_string(),
-                        });
-                    }
+        // 2. Check if we have structured casks but no simple casks array
+        if !parsed.casks_structured.is_empty() && parsed.casks.is_empty() {
+            // Migrate to simple format
+            for cask in &parsed.casks_structured {
+                if !parsed.casks.contains(&cask.name) {
+                    parsed.casks.push(cask.name.clone());
                 }
             }
         }
         
-        // Process formulas - handle both formats
-        if let Some(formulas_value) = parsed_content.get("formulas") {
-            if let Some(formulas_array) = formulas_value.as_array() {
-                for formula in formulas_array {
-                    if let Some(formula_table) = formula.as_table() {
-                        if let Some(name) = formula_table.get("name").and_then(|v| v.as_str()) {
-                            let version = formula_table.get("version")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("latest")
-                                .to_string();
-                            
-                            let mut options = Vec::new();
-                            if let Some(opts) = formula_table.get("options").and_then(|v| v.as_array()) {
-                                for opt in opts {
-                                    if let Some(opt_str) = opt.as_str() {
-                                        options.push(opt_str.to_string());
-                                    }
-                                }
-                            }
-                            
-                            manifest.formulas.push(Formula {
-                                name: name.to_string(),
-                                version,
-                                options,
-                                state: default_state(),
-                            });
+        // 3. Check if we have structured taps but no simple taps array
+        if !parsed.taps_structured.is_empty() && parsed.taps.is_empty() {
+            // Migrate to simple format
+            for tap in &parsed.taps_structured {
+                if !parsed.taps.contains(&tap.name) {
+                    parsed.taps.push(tap.name.clone());
+                }
+            }
+        }
+        
+        // 4. Migrate from 'brews' field if it exists in the raw TOML (backward compatibility)
+        if let Ok(raw_value) = toml::from_str::<toml::Value>(&content) {
+            // Process legacy 'brews' field for casks
+            if let Some(brews) = raw_value.get("brews").and_then(|v| v.as_array()) {
+                for brew in brews {
+                    if let Some(name) = brew.as_str() {
+                        let name_string = name.to_string();
+                        if !parsed.casks.contains(&name_string) {
+                            parsed.casks.push(name_string);
                         }
                     }
                 }
             }
         }
         
-        // Process casks - handle both formats
-        if let Some(casks_value) = parsed_content.get("casks") {
-            if let Some(casks_array) = casks_value.as_array() {
-                for cask in casks_array {
-                    if let Some(cask_table) = cask.as_table() {
-                        if let Some(name) = cask_table.get("name").and_then(|v| v.as_str()) {
-                            let version = cask_table.get("version")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("latest")
-                                .to_string();
-                            
-                            let mut options = Vec::new();
-                            if let Some(opts) = cask_table.get("options").and_then(|v| v.as_array()) {
-                                for opt in opts {
-                                    if let Some(opt_str) = opt.as_str() {
-                                        options.push(opt_str.to_string());
-                                    }
-                                }
-                            }
-                            
-                            manifest.casks.push(Cask {
-                                name: name.to_string(),
-                                version,
-                                options,
-                                state: default_state(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process simplified formulae list
-        if let Some(formulae_value) = parsed_content.get("formulae") {
-            if let Some(formulae_array) = formulae_value.as_array() {
-                for formula in formulae_array {
-                    if let Some(formula_str) = formula.as_str() {
-                        // Add to the manifest.formulae collection
-                        manifest.formulae.push(formula_str.to_string());
-                        
-                        // Also process into the structured format
-                        if let Some((name, version)) = formula_str.split_once(':') {
-                            manifest.formulas.push(Formula {
-                                name: name.trim().to_string(),
-                                version: version.trim().to_string(),
-                                options: Vec::new(),
-                                state: default_state(),
-                            });
-                        } else {
-                            manifest.formulas.push(Formula {
-                                name: formula_str.trim().to_string(),
-                                version: "latest".to_string(),
-                                options: Vec::new(),
-                                state: default_state(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process simplified brews list
-        if let Some(brews_value) = parsed_content.get("brews") {
-            if let Some(brews_array) = brews_value.as_array() {
-                for brew in brews_array {
-                    if let Some(brew_str) = brew.as_str() {
-                        // Add to the manifest.brews collection
-                        manifest.brews.push(brew_str.to_string());
-                        
-                        // Also process into the structured format
-                        if let Some((name, version)) = brew_str.split_once(':') {
-                            manifest.casks.push(Cask {
-                                name: name.trim().to_string(),
-                                version: version.trim().to_string(),
-                                options: Vec::new(),
-                                state: default_state(),
-                            });
-                        } else {
-                            manifest.casks.push(Cask {
-                                name: brew_str.trim().to_string(),
-                                version: "latest".to_string(),
-                                options: Vec::new(),
-                                state: default_state(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        
-        Ok(manifest)
+        Ok(parsed)
     }
     
-    /// Save a manifest to a file
+    /// Save a manifest to a file - outputs simplified format
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> ShardResult<()> {
-        // Create a clean compact manifest for export
-        let mut clean_manifest = toml::value::Table::new();
+        log_debug(&format!("Saving manifest to: {}", path.as_ref().display()));
         
-        // Add metadata at the top
-        let mut metadata_table = toml::value::Table::new();
-        metadata_table.insert("description".to_string(), toml::Value::String(self.metadata.description.clone()));
-        metadata_table.insert("protected".to_string(), toml::Value::Boolean(self.metadata.protected));
-        metadata_table.insert("version".to_string(), toml::Value::String(self.metadata.version.clone()));
-        metadata_table.insert("allowed_users".to_string(), toml::Value::Array(self.metadata.allowed_users.iter().map(|u| toml::Value::String(u.clone())).collect()));
-        metadata_table.insert("protection_level".to_string(), toml::Value::Integer(self.metadata.protection_level as i64));
-        clean_manifest.insert("metadata".to_string(), toml::Value::Table(metadata_table));
+        // Create a simplified representation for serialization
+        let simplified = SimplifiedManifest {
+            formulae: self.formulae.clone(),
+            casks: self.casks.clone(),
+            taps: self.taps.clone(),
+            metadata: self.metadata.clone(),
+        };
         
-        // Add taps as simple strings
-        let mut taps = Vec::new();
-        for tap in &self.taps {
-            taps.push(toml::Value::String(tap.name.clone()));
-        }
-        if !taps.is_empty() {
-            clean_manifest.insert("taps".to_string(), toml::Value::Array(taps));
-        }
+        // Serialize to TOML
+        let toml_content = toml::to_string_pretty(&simplified)
+            .with_context(|| "Failed to serialize manifest to TOML")?;
         
-        // Add formulae as simple strings, tracking to avoid duplicates
-        let mut formulae = Vec::new();
-        let mut formula_names = std::collections::HashSet::new();
-        
-        // Convert detailed formulas to simplified list
-        for formula in &self.formulas {
-            formula_names.insert(formula.name.clone());
-            
-            if formula.version == "latest" {
-                formulae.push(toml::Value::String(formula.name.clone()));
-            } else {
-                formulae.push(toml::Value::String(format!("{}:{}", formula.name, formula.version)));
-            }
-        }
-        
-        // Also include directly set formulae if not empty and not duplicate
-        for formula in &self.formulae {
-            // Extract name part in case it has a version like "name:version"
-            let name = if let Some(pos) = formula.find(':') {
-                &formula[..pos]
-            } else {
-                formula
-            };
-            
-            if !formula_names.contains(name) {
-                formula_names.insert(name.to_string());
-                formulae.push(toml::Value::String(formula.clone()));
-            }
-        }
-        
-        if !formulae.is_empty() {
-            clean_manifest.insert("formulae".to_string(), toml::Value::Array(formulae));
-        }
-        
-        // Add brews (casks) as simple strings, tracking to avoid duplicates
-        let mut brews = Vec::new();
-        let mut brew_names = std::collections::HashSet::new();
-        
-        // Convert detailed casks to simplified list
-        for cask in &self.casks {
-            brew_names.insert(cask.name.clone());
-            
-            if cask.version == "latest" {
-                brews.push(toml::Value::String(cask.name.clone()));
-            } else {
-                brews.push(toml::Value::String(format!("{}:{}", cask.name, cask.version)));
-            }
-        }
-        
-        // Also include directly set brews if not empty and not duplicate
-        for brew in &self.brews {
-            // Extract name part in case it has a version like "name:version"
-            let name = if let Some(pos) = brew.find(':') {
-                &brew[..pos]
-            } else {
-                brew
-            };
-            
-            if !brew_names.contains(name) {
-                brew_names.insert(name.to_string());
-                brews.push(toml::Value::String(brew.clone()));
-            }
-        }
-        
-        if !brews.is_empty() {
-            clean_manifest.insert("brews".to_string(), toml::Value::Array(brews));
-        }
-        
-        // Generate TOML content
-        let toml_content = toml::to_string_pretty(&clean_manifest)
-            .with_context(|| format!("Failed to serialize manifest to TOML: {}", path.as_ref().display()))?;
+        // Ensure parent directory exists
+        filesystem::ensure_parent_dir_exists(path.as_ref())?;
         
         // Write to file
-        std::fs::write(path.as_ref(), toml_content)
-            .with_context(|| format!("Failed to write manifest file: {}", path.as_ref().display()))?;
+        std::fs::write(path.as_ref(), &toml_content)
+            .with_context(|| format!("Failed to write manifest to file: {}", path.as_ref().display()))?;
         
         Ok(())
     }
     
-    // Stub for backward compatibility - does nothing now
+    /// Update modification info - placeholder for future use
     pub fn update_modification_info(&mut self) {
-        // Intentionally empty - no longer tracking modification info
+        // Currently a placeholder, will be updated with user/timestamp later
     }
     
-    /// Returns whether this manifest is protected
+    /// Check if the manifest is protected
     pub fn is_protected(&self) -> bool {
         self.metadata.protected
     }
+}
+
+/// Simplified manifest structure for serialization
+#[derive(Serialize)]
+struct SimplifiedManifest {
+    formulae: Vec<String>,
+    casks: Vec<String>,
+    taps: Vec<String>,
+    metadata: Metadata,
 }

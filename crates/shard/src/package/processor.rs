@@ -1,10 +1,7 @@
 use crate::ShardResult;
-use crate::utils::{ShardError, ResultExt};
-use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
 use crate::core::manifest::{PackageState, Formula, Cask};
-use crate::brew::client::BrewClient;
-use std::process::Command;
+use crate::brew::{BrewClient, get_client};
+use crate::utils::{log_step, log_success, log_error, log_warning};
 
 /// Represents the type of package being managed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,423 +39,7 @@ impl PackageOperation {
     }
 }
 
-/// Get a new BrewClient instance
-pub fn get_brew_client() -> BrewClient {
-    BrewClient::new()
-}
-
-/// Helper function to execute a command with proper error handling and messaging
-pub fn execute_brew_command<F, S>(
-    operation: PackageOperation, 
-    package_type: &str, 
-    package_name: &str, 
-    has_options: bool,
-    command: F,
-) -> ShardResult<()> 
-where
-    F: FnOnce() -> ShardResult<()>,
-    S: AsRef<str>,
-{
-    let options_text = if has_options { " with custom options" } else { "" };
-    
-    // Create progress bar for individual package operations
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .unwrap()
-    );
-    
-    pb.set_message(format!("{} {}{}: {}", 
-        operation.as_str(), 
-        package_type, 
-        options_text,
-        style(package_name).bold()));
-    
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    
-    match command() {
-        Ok(_) => {
-            pb.finish_with_message(format!("{} {} {}{}: {}", 
-                style("✓").green().bold(),
-                operation.as_str(), 
-                package_type, 
-                options_text,
-                style(package_name).bold()));
-            Ok(())
-        },
-        Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("already installed") {
-                // Just finish the progress bar without any message for "already installed"
-                pb.finish();
-                Ok(())
-            } else {
-                pb.finish_with_message(format!("{} Error {} {}: {}", 
-                    style("✗").red().bold(),
-                    operation.as_str().to_lowercase(), 
-                    style(package_name).bold(), 
-                    e));
-                Err(e)
-            }
-        }
-    }
-}
-
-/// Generic function for package operations with options
-pub fn package_operation_with_options(
-    package_type: PackageType,
-    operation: PackageOperation, 
-    name: &str, 
-    options: &[String], 
-) -> ShardResult<()> {
-    let type_str = package_type.as_str();
-    let has_options = !options.is_empty();
-    
-    execute_brew_command::<_, String>(
-        operation, 
-        type_str, 
-        name, 
-        has_options,
-        || {
-            match (package_type, operation) {
-                (PackageType::Formula, PackageOperation::Install) => get_brew_client().install_formula(name, options),
-                (PackageType::Formula, PackageOperation::Upgrade) => get_brew_client().upgrade_formula_with_options(name, options),
-                (PackageType::Cask, PackageOperation::Install) => get_brew_client().install_cask(name, options),
-                (PackageType::Cask, PackageOperation::Upgrade) => get_brew_client().upgrade_cask_with_options(name, options),
-                _ => Err(ShardError::BrewError(format!("Unsupported operation '{:?}' for {}", operation, type_str))),
-            }
-        },
-    )
-}
-
-/// Helper function to install a formula with options
-pub fn install_formula_with_options(
-    name: &str, 
-    options: &[String], 
-) -> ShardResult<()> {
-    package_operation_with_options(
-        PackageType::Formula,
-        PackageOperation::Install,
-        name,
-        options,
-    )
-}
-
-/// Helper function to upgrade a formula with options
-pub fn upgrade_formula_with_options(
-    name: &str, 
-    options: &[String], 
-) -> ShardResult<()> {
-    package_operation_with_options(
-        PackageType::Formula,
-        PackageOperation::Upgrade,
-        name,
-        options,
-    )
-}
-
-/// Helper function to install a cask with options
-pub fn install_cask_with_options(
-    name: &str, 
-    options: &[String], 
-) -> ShardResult<()> {
-    package_operation_with_options(
-        PackageType::Cask,
-        PackageOperation::Install,
-        name,
-        options,
-    )
-}
-
-/// Helper function to upgrade a cask with options
-pub fn upgrade_cask_with_options(
-    name: &str, 
-    options: &[String], 
-) -> ShardResult<()> {
-    package_operation_with_options(
-        PackageType::Cask,
-        PackageOperation::Upgrade,
-        name,
-        options,
-    )
-}
-
-/// Helper function to uninstall a package (formula or cask)
-pub fn uninstall_package(
-    package_type: PackageType,
-    name: &str,
-    force: bool
-) -> ShardResult<()> {
-    let type_str = package_type.as_str();
-    println!("Uninstalling {}: {}", type_str, style(name).bold());
-    
-    let result = match package_type {
-        PackageType::Formula => get_brew_client().uninstall_formula(name, force),
-        PackageType::Cask => get_brew_client().uninstall_cask(name, force),
-    };
-    
-    match result {
-        Ok(_) => {
-            println!("Successfully uninstalled {}: {}", type_str, style(name).bold());
-            Ok(())
-        },
-        Err(e) => {
-            // Check for common error cases
-            let error_msg = e.to_string();
-            if error_msg.contains("is not installed") {
-                println!("{} {} is not installed, skipping", type_str, style(name).bold());
-                Ok(())
-            } else {
-                eprintln!("Error uninstalling {} {}: {}", type_str, name, e);
-                Err(e)
-            }
-        }
-    }
-}
-
-/// Helper function to add a tap
-pub fn add_tap(name: &str) -> ShardResult<()> {
-    println!("Adding tap: {}", style(name).bold());
-    match get_brew_client().add_tap(name) {
-        Ok(_) => {
-            println!("Successfully added tap: {}", style(name).bold());
-            Ok(())
-        },
-        Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("already tapped") {
-                // Skip already tapped message
-                Ok(())
-            } else {
-                eprintln!("Error adding tap {}: {}", name, e);
-                Err(e)
-            }
-        }
-    }
-}
-
-/// Run Homebrew cleanup
-pub fn run_cleanup() -> ShardResult<()> {
-    println!("Running final cleanup...");
-    match get_brew_client().cleanup(true) {
-        Ok(_) => {
-            println!("{} Final cleanup completed", style("✓").bold().green());
-            Ok(())
-        },
-        Err(e) => {
-            eprintln!("Error cleaning up Homebrew packages: {}", e);
-            Err(e)
-        }
-    }
-}
-
-/// Check if a formula is outdated
-pub fn is_formula_outdated(formula: &str) -> ShardResult<bool> {
-    let outdated_check = Command::new("brew")
-        .args(["outdated", "--formula", formula, "--quiet"])
-        .output()
-        .with_context(|| format!("Failed to check if formula is outdated: {}", formula))?;
-    
-    let output = String::from_utf8_lossy(&outdated_check.stdout);
-    Ok(!output.trim().is_empty())
-}
-
-/// Check if a cask is outdated
-pub fn is_cask_outdated(cask: &str) -> ShardResult<bool> {
-    let outdated_check = Command::new("brew")
-        .args(["outdated", "--cask", cask, "--quiet"])
-        .output()
-        .with_context(|| format!("Failed to check if cask is outdated: {}", cask))?;
-    
-    let output = String::from_utf8_lossy(&outdated_check.stdout);
-    Ok(!output.trim().is_empty())
-}
-
-/// Get a list of all currently installed formulae
-pub fn get_installed_formulae() -> ShardResult<Vec<String>> {
-    get_brew_client().get_installed_formulae()
-        .with_context(|| "Failed to get list of installed formulae")
-}
-
-/// Get a list of all currently installed casks
-pub fn get_installed_casks() -> ShardResult<Vec<String>> {
-    get_brew_client().get_installed_casks()
-        .with_context(|| "Failed to get list of installed casks")
-}
-
-/// Get a list of all currently installed taps
-pub fn get_installed_taps() -> ShardResult<Vec<String>> {
-    get_brew_client().get_installed_taps()
-        .with_context(|| "Failed to get list of installed taps")
-}
-
-/// Get a list of all packages installed as dependencies
-pub fn get_dependency_packages() -> ShardResult<Vec<String>> {
-    get_brew_client().get_dependency_packages()
-        .with_context(|| "Failed to get list of dependency packages")
-}
-
-/// Get a list of explicitly installed packages (both formulae and casks, excluding dependencies)
-pub fn get_all_main_packages() -> ShardResult<(Vec<String>, Vec<String>)> {
-    // Get all installed formulae and casks
-    let all_formulae = get_installed_formulae()
-        .with_context(|| "Failed to get installed formulae for main package listing")?;
-    let all_casks = get_installed_casks()
-        .with_context(|| "Failed to get installed casks for main package listing")?;
-    
-    // Get dependency packages
-    let deps = get_dependency_packages()
-        .with_context(|| "Failed to get dependency packages")?;
-    
-    // Filter out dependencies from formulae
-    let main_formulae: Vec<String> = all_formulae.into_iter()
-        .filter(|f| !deps.contains(f))
-        .collect();
-    
-    Ok((main_formulae, all_casks))
-}
-
-/// Generic function to perform batch operations on packages
-pub fn batch_package_operation<F>(
-    package_type: PackageType,
-    operation: &str,
-    packages: &[String],
-    dry_run: bool,
-    operation_fn: F
-) -> ShardResult<()>
-where
-    F: FnOnce(&[String]) -> ShardResult<()>,
-{
-    if packages.is_empty() {
-        return Ok(());
-    }
-
-    if dry_run {
-        println!("Would {} {} {}s", operation, packages.len(), package_type.as_str());
-        for package in packages {
-            println!("  - {}", style(package).bold());
-        }
-        return Ok(());
-    }
-    
-    println!("{} {} {}s...", operation, packages.len(), package_type.as_str());
-    
-    // Show detailed list of packages to install
-    for package in packages {
-        println!("  → Will {} {}: {}", 
-            operation.to_lowercase(), 
-            package_type.as_str(), 
-            style(package).bold());
-    }
-    
-    // Create a spinner instead of a progress bar
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .unwrap()
-    );
-    
-    spinner.set_message(format!("{}ing {} packages", operation, package_type.as_str()));
-    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-    
-    // For individual installation, we'll manually handle each package with progress
-    if packages.len() == 1 {
-        let package = &packages[0];
-        spinner.set_message(format!("{}ing {}: {}", 
-            operation.to_lowercase(), 
-            package_type.as_str(), 
-            style(package).bold()));
-        
-        match operation_fn(packages) {
-            Ok(_) => {
-                spinner.finish_with_message(format!("{} {} {} {}",
-                    style("✓").bold().green(),
-                    operation,
-                    package_type.as_str(),
-                    style(package).bold()));
-                Ok(())
-            },
-            Err(e) => {
-                spinner.finish_with_message(format!("{} Failed to {} {}: {}",
-                    style("✗").bold().red(),
-                    operation.to_lowercase(),
-                    package,
-                    e));
-                Err(e)
-            }
-        }
-    } else {
-        // For multiple packages
-        match operation_fn(packages) {
-            Ok(_) => {
-                spinner.finish_with_message(format!("{} Successfully {}d {} {}s", 
-                    style("✓").bold().green(),
-                    operation.to_lowercase(),
-                    packages.len(),
-                    package_type.as_str()));
-                Ok(())
-            },
-            Err(e) => {
-                spinner.finish_with_message(format!("{} Error {}ing {} {}s: {}", 
-                    style("✗").bold().red(),
-                    operation.to_lowercase(),
-                    packages.len(),
-                    package_type.as_str(),
-                    e));
-                Err(e)
-            }
-        }
-    }
-}
-
-/// Perform a batch install of multiple formulae at once
-pub fn batch_install_formulae(formulae: &[String], dry_run: bool) -> ShardResult<()> {
-    batch_package_operation(
-        PackageType::Formula,
-        "Installing",
-        formulae,
-        dry_run,
-        |packages| get_brew_client().batch_install_formulae(packages)
-    )
-}
-
-/// Perform a batch upgrade of multiple formulae at once
-pub fn batch_upgrade_formulae(formulae: &[String], dry_run: bool) -> ShardResult<()> {
-    batch_package_operation(
-        PackageType::Formula,
-        "Upgrading",
-        formulae,
-        dry_run,
-        |packages| get_brew_client().batch_upgrade_formulae(packages)
-    )
-}
-
-/// Perform a batch install of multiple casks at once
-pub fn batch_install_casks(casks: &[String], dry_run: bool) -> ShardResult<()> {
-    batch_package_operation(
-        PackageType::Cask,
-        "Installing",
-        casks,
-        dry_run,
-        |packages| get_brew_client().batch_install_casks(packages)
-    )
-}
-
-/// Perform a batch upgrade of multiple casks at once
-pub fn batch_upgrade_casks(casks: &[String], dry_run: bool) -> ShardResult<()> {
-    batch_package_operation(
-        PackageType::Cask,
-        "Upgrading",
-        casks,
-        dry_run,
-        |packages| get_brew_client().batch_upgrade_casks(packages)
-    )
-}
-
-/// Result of processing packages: items to install, upgrade, with options, and to uninstall
-#[derive(Default)]
+/// Structure to hold the results of package processing
 pub struct PackageProcessResult {
     pub to_install: Vec<String>,
     pub to_upgrade: Vec<String>,
@@ -466,7 +47,7 @@ pub struct PackageProcessResult {
     pub to_uninstall: Vec<String>,
 }
 
-/// Trait for objects that contain package information
+/// Trait for package information
 pub trait PackageInfo {
     fn state(&self) -> PackageState;
     fn options(&self) -> &[String];
@@ -487,35 +68,35 @@ impl PackageInfo for Formula {
     }
 }
 
-impl<'a> PackageInfo for &'a Formula {
+impl PackageInfo for &str {
     fn state(&self) -> PackageState {
-        self.state.clone()
+        PackageState::Latest
     }
     
     fn options(&self) -> &[String] {
-        &self.options
+        &[]
     }
     
     fn name(&self) -> &str {
-        &self.name
+        self
+    }
+}
+
+impl PackageInfo for String {
+    fn state(&self) -> PackageState {
+        PackageState::Latest
+    }
+    
+    fn options(&self) -> &[String] {
+        &[]
+    }
+    
+    fn name(&self) -> &str {
+        self
     }
 }
 
 impl PackageInfo for Cask {
-    fn state(&self) -> PackageState {
-        self.state.clone()
-    }
-    
-    fn options(&self) -> &[String] {
-        &self.options
-    }
-    
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl<'a> PackageInfo for &'a Cask {
     fn state(&self) -> PackageState {
         self.state.clone()
     }
@@ -534,6 +115,7 @@ pub struct PackageProcessor {
     pub package_type: PackageType,
     pub installed_packages: Vec<String>,
     pub suppress_messages: bool,
+    brew_client: BrewClient,
 }
 
 impl PackageProcessor {
@@ -543,56 +125,62 @@ impl PackageProcessor {
             package_type,
             installed_packages,
             suppress_messages,
+            brew_client: get_client(),
         }
     }
     
     /// Check if a package is installed
     pub fn is_installed(&self, name: &str) -> bool {
-        self.installed_packages.contains(&name.to_string())
+        self.installed_packages.iter().any(|p| p == name)
     }
     
-    /// Process a list of packages based on their state
+    /// Process packages and determine what actions need to be taken
     pub fn process_packages<T>(&self, packages: &[T]) -> ShardResult<PackageProcessResult>
     where 
         T: PackageInfo,
     {
-        let mut result = PackageProcessResult::default();
+        let mut result = PackageProcessResult {
+            to_install: Vec::new(),
+            to_upgrade: Vec::new(),
+            with_options: Vec::new(),
+            to_uninstall: Vec::new(),
+        };
         
-        // First pass: categorize packages
         for package in packages {
             let name = package.name();
             let state = package.state();
             let options = package.options();
-            let has_options = !options.is_empty();
-            let is_installed = self.is_installed(name);
             
             match state {
+                PackageState::Latest => {
+                    let is_installed = self.is_installed(name);
+                    
+                    if !options.is_empty() {
+                        // Handle packages with custom options
+                        result.with_options.push((name.to_string(), options.to_vec()));
+                    } else if is_installed {
+                        // Package is installed, add to upgrade list
+                        result.to_upgrade.push(name.to_string());
+                    } else {
+                        // Package is not installed, add to install list
+                        result.to_install.push(name.to_string());
+                    }
+                },
+                PackageState::Present => {
+                    // Just ensure the package is installed, don't upgrade
+                    if !self.is_installed(name) {
+                        if !options.is_empty() {
+                            result.with_options.push((name.to_string(), options.to_vec()));
+                        } else {
+                            result.to_install.push(name.to_string());
+                        }
+                    }
+                },
                 PackageState::Absent => {
-                    // Should be uninstalled if currently installed
-                    if is_installed {
+                    // Package should be uninstalled
+                    if self.is_installed(name) {
                         result.to_uninstall.push(name.to_string());
                     }
-                },
-                PackageState::Latest if has_options => {
-                    // Has custom options, needs individual processing
-                    result.with_options.push((name.to_string(), options.to_vec()));
-                },
-                PackageState::Latest if is_installed => {
-                    // Already installed, needs upgrade
-                    result.to_upgrade.push(name.to_string());
-                },
-                PackageState::Present if has_options => {
-                    // Has custom options, needs individual processing
-                    if !is_installed {
-                        result.with_options.push((name.to_string(), options.to_vec()));
-                    }
-                },
-                _ if !is_installed => {
-                    // Not installed, needs to be installed
-                    result.to_install.push(name.to_string());
-                },
-                _ => {
-                    // Already installed, no action needed
                 },
             }
         }
@@ -603,167 +191,202 @@ impl PackageProcessor {
     /// Execute operations on the packages based on the processed results
     pub fn execute_operations(&self, result: &PackageProcessResult, dry_run: bool) -> ShardResult<()> {
         let pkg_type_str = self.package_type.as_str();
-        
-        // Process installations
+
+        // --- Dry Run Handling ---
+        if dry_run {
+            if !result.to_install.is_empty() {
+                 log_step(&format!("Would install {} {}(s): {}", result.to_install.len(), pkg_type_str, result.to_install.join(", ")));
+            }
+            // Skip upgrade information in dry-run mode as it's not relevant for manifests
+            // Only show packages that would be newly installed or uninstalled
+            for (name, options) in &result.with_options {
+                 // Only show installation messages, not upgrades
+                 if !self.is_installed(name) {
+                     log_step(&format!("Would install {} {} with options: {}", pkg_type_str, name, options.join(" ")));
+                 }
+            }
+            if !result.to_uninstall.is_empty() {
+                 log_step(&format!("Would uninstall {} {}(s): {}", result.to_uninstall.len(), pkg_type_str, result.to_uninstall.join(", ")));
+            }
+            return Ok(());
+        }
+
+        // --- Actual Execution ---
+
+        // Process installations (batch)
         if !result.to_install.is_empty() {
             match self.package_type {
-                PackageType::Formula => batch_install_formulae(&result.to_install, dry_run)?,
-                PackageType::Cask => batch_install_casks(&result.to_install, dry_run)?,
+                PackageType::Formula => {
+                    // Use our improved method with better error handling
+                    if let Err(e) = self.brew_client.batch_install_formulae(&result.to_install) {
+                        log_warning(&format!("Some formula installations may have failed: {}", e));
+                    }
+                },
+                PackageType::Cask => {
+                    // This already has improved error handling
+                    if let Err(e) = self.brew_client.batch_install_casks(&result.to_install) {
+                        log_warning(&format!("Some cask installations may have failed: {}", e));
+                    }
+                },
             }
         }
-        
-        // Process upgrades
+
+        // Process upgrades (batch) - with improved error handling
         if !result.to_upgrade.is_empty() {
             match self.package_type {
-                PackageType::Formula => batch_upgrade_formulae(&result.to_upgrade, dry_run)?,
-                PackageType::Cask => batch_upgrade_casks(&result.to_upgrade, dry_run)?,
+                PackageType::Formula => {
+                    if let Err(e) = self.brew_client.batch_upgrade_formulae(&result.to_upgrade) {
+                        log_warning(&format!("Some formula upgrades may have failed: {}", e));
+                    }
+                },
+                PackageType::Cask => {
+                    if let Err(e) = self.brew_client.batch_upgrade_casks(&result.to_upgrade) {
+                        log_warning(&format!("Some cask upgrades may have failed: {}", e));
+                    }
+                },
             }
         }
-        
-        // Process packages with options
-        if !dry_run {
-            for (name, options) in &result.with_options {
-                let is_installed = self.is_installed(name);
-                
-                if is_installed {
-                    // Upgrade with options
-                    match self.package_type {
-                        PackageType::Formula => {
-                            upgrade_formula_with_options(name, options)?
-                        },
-                        PackageType::Cask => {
-                            upgrade_cask_with_options(name, options)?
-                        },
+
+        // Process packages with options (individual)
+        for (name, options) in &result.with_options {
+            let is_installed = self.is_installed(name);
+            match self.package_type {
+                PackageType::Formula => {
+                    if is_installed {
+                        if let Err(e) = self.brew_client.upgrade_formula_with_options(name, options) {
+                            log_warning(&format!("Failed to upgrade formula {} with options: {}", name, e));
+                        }
+                    } else {
+                        if let Err(e) = self.brew_client.install_formula(name, options) {
+                            log_warning(&format!("Failed to install formula {} with options: {}", name, e));
+                        }
                     }
-                } else {
-                    // Install with options
-                    match self.package_type {
-                        PackageType::Formula => {
-                            install_formula_with_options(name, options)?
-                        },
-                        PackageType::Cask => {
-                            install_cask_with_options(name, options)?
-                        },
+                }
+                PackageType::Cask => {
+                    if is_installed {
+                        if let Err(e) = self.brew_client.upgrade_cask_with_options(name, options) {
+                            log_warning(&format!("Failed to upgrade cask {} with options: {}", name, e));
+                        } 
+                    } else {
+                        if let Err(e) = self.brew_client.install_cask(name, options) {
+                            log_warning(&format!("Failed to install cask {} with options: {}", name, e));
+                        }
                     }
                 }
             }
-        } else if !result.with_options.is_empty() {
-            // Dry run output for packages with options
-            for (name, options) in &result.with_options {
-                let is_installed = self.is_installed(name);
-                let operation = if is_installed { "upgrade" } else { "install" };
-                println!("Would {} {} {} with options: {}", 
-                    operation, pkg_type_str, style(name).bold(), 
-                    options.join(" "));
+        }
+
+        // Process uninstallations (individual)
+        if !result.to_uninstall.is_empty() {
+             log_step(&format!("Processing {} {} uninstalls...", result.to_uninstall.len(), pkg_type_str));
+            for name in &result.to_uninstall {
+                match self.package_type {
+                     PackageType::Formula => {
+                         if let Err(e) = self.brew_client.uninstall_formula(name, true) {
+                              log_warning(&format!("Failed to uninstall formula {}: {}", name, e));
+                         }
+                     },
+                     PackageType::Cask => {
+                         if let Err(e) = self.brew_client.uninstall_cask(name, true) {
+                              log_warning(&format!("Failed to uninstall cask {}: {}", name, e));
+                         }
+                     },
+                }
             }
         }
-        
-        // Process uninstallations
-        if !result.to_uninstall.is_empty() && !dry_run {
-            for name in &result.to_uninstall {
-                uninstall_package(self.package_type, name, true)?;
-            }
-        } else if !result.to_uninstall.is_empty() {
-            // Dry run output for uninstallations
-            for name in &result.to_uninstall {
-                println!("Would uninstall {}: {}", pkg_type_str, style(name).bold());
-            }
-        }
-        
+
         Ok(())
     }
-
+    
     /// Create a new processor for formulae
     pub fn for_formulae(suppress_messages: bool) -> ShardResult<Self> {
+        let brew_client = get_client();
+        let installed_packages = brew_client.get_installed_formulae()?;
         Ok(Self {
             package_type: PackageType::Formula,
-            installed_packages: get_installed_formulae()?,
+            installed_packages,
             suppress_messages,
+            brew_client,
         })
     }
     
     /// Create a new processor for casks
     pub fn for_casks(suppress_messages: bool) -> ShardResult<Self> {
+        let brew_client = get_client();
+        let installed_packages = brew_client.get_installed_casks()?;
         Ok(Self {
             package_type: PackageType::Cask,
-            installed_packages: get_installed_casks()?,
+            installed_packages,
             suppress_messages,
+            brew_client,
         })
-    }
-    
-    /// Get a list of all currently installed formulae
-    pub fn get_installed_formulae() -> ShardResult<Vec<String>> {
-        get_installed_formulae()
-    }
-
-    /// Get a list of all currently installed casks
-    pub fn get_installed_casks() -> ShardResult<Vec<String>> {
-        get_installed_casks()
-    }
-
-    /// Get a list of all currently installed taps
-    pub fn get_installed_taps() -> ShardResult<Vec<String>> {
-        get_installed_taps()
-    }
-
-    /// Get a list of all packages installed as dependencies
-    pub fn get_dependency_packages() -> ShardResult<Vec<String>> {
-        get_dependency_packages()
-    }
-    
-    /// Get a list of explicitly installed packages (both formulae and casks, excluding dependencies)
-    pub fn get_all_main_packages() -> ShardResult<(Vec<String>, Vec<String>)> {
-        get_all_main_packages()
     }
     
     /// Uninstall a package using this processor's package type
     pub fn uninstall(&self, name: &str, force: bool) -> ShardResult<()> {
-        uninstall_package(self.package_type, name, force)
-    }
-    
-    /// Uninstall a package
-    pub fn uninstall_package(package_type: PackageType, name: &str, force: bool) -> ShardResult<()> {
-        uninstall_package(package_type, name, force)
+        match self.package_type {
+            PackageType::Formula => self.brew_client.uninstall_formula(name, force),
+            PackageType::Cask => self.brew_client.uninstall_cask(name, force),
+        }
     }
 }
 
-/// Utility struct for Homebrew operations
-pub struct BrewUtils;
+// The following are convenience functions that directly use the BrewClient
+// These could be imported directly from brew::get_client() in consuming code
+// but are kept for backward compatibility
 
-impl BrewUtils {
-    /// Run Homebrew cleanup
-    pub fn run_cleanup() -> ShardResult<()> {
-        println!("Running final cleanup...");
-        match get_brew_client().cleanup(true) {
-            Ok(_) => {
-                println!("{} Final cleanup completed", style("✓").bold().green());
-                Ok(())
-            },
-            Err(e) => {
-                eprintln!("Error cleaning up Homebrew packages: {}", e);
-                Err(e)
-            }
-        }
-    }
+/// Get a list of all currently installed formulae
+pub fn get_installed_formulae() -> ShardResult<Vec<String>> {
+    get_client().get_installed_formulae()
+}
+
+/// Get a list of all currently installed casks
+pub fn get_installed_casks() -> ShardResult<Vec<String>> {
+    get_client().get_installed_casks()
+}
+
+/// Get a list of all currently installed taps
+pub fn get_installed_taps() -> ShardResult<Vec<String>> {
+    get_client().get_installed_taps()
+}
+
+/// Get a list of all packages installed as dependencies
+pub fn get_dependency_packages() -> ShardResult<Vec<String>> {
+    get_client().get_dependency_packages()
+}
+
+/// Get a list of explicitly installed packages (both formulae and casks, excluding dependencies)
+pub fn get_all_main_packages() -> ShardResult<(Vec<String>, Vec<String>)> {
+    let brew_client = get_client();
+    let main_formulae = brew_client.get_installed_formulae()?;
+    let main_casks = brew_client.get_installed_casks()?;
+    let dependency_packages = brew_client.get_dependency_packages()?;
     
-    /// Add a tap to Homebrew
-    pub fn add_tap(name: &str) -> ShardResult<()> {
-        println!("Adding tap: {}", style(name).bold());
-        match get_brew_client().add_tap(name) {
-            Ok(_) => {
-                println!("Successfully added tap: {}", style(name).bold());
-                Ok(())
-            },
-            Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("already tapped") {
-                    // Skip already tapped message
-                    Ok(())
-                } else {
-                    eprintln!("Error adding tap {}: {}", name, e);
-                    Err(e)
-                }
-            }
+    // Filter out dependencies
+    let main_formulae = main_formulae
+        .into_iter()
+        .filter(|f| !dependency_packages.contains(f))
+        .collect();
+    
+    Ok((main_formulae, main_casks))
+}
+
+/// Add a tap to Homebrew
+pub fn add_tap(name: &str) -> ShardResult<()> {
+    get_client().add_tap(name)
+}
+
+/// Run Homebrew cleanup
+pub fn run_cleanup() -> ShardResult<()> {
+    log_step("Running final cleanup...");
+    match get_client().cleanup(true) {
+        Ok(_) => {
+            log_success("Final cleanup completed");
+            Ok(())
+        },
+        Err(e) => {
+            log_error(&format!("Error cleaning up Homebrew packages: {}", e));
+            Err(e)
         }
     }
 }

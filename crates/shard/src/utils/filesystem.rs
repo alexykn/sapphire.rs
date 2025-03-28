@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::io;
 
 use crate::utils::{ShardResult, ShardError, ResultExt};
+use shellexpand;
 
 /// Ensures a directory exists, creating it if necessary
 pub fn ensure_dir_exists(path: &Path) -> ShardResult<()> {
@@ -74,4 +75,20 @@ pub fn backup_file(path: &Path) -> ShardResult<Option<PathBuf>> {
     let backup_path = PathBuf::from(format!("{}.bak", path.display()));
     copy_file(path, &backup_path)?;
     Ok(Some(backup_path))
+}
+
+/// Resolve a manifest name or path to a full path
+/// Handles special shard names like "user", "system", or any custom shard name
+/// Returns a full path to the manifest file
+pub fn resolve_manifest_path(manifest_target: &str) -> ShardResult<String> {
+    // If it looks like a path, just expand tilde
+    if manifest_target.contains('/') || manifest_target.ends_with(".toml") {
+        Ok(shellexpand::tilde(manifest_target).to_string())
+    } else {
+        // Assume it's a shard name (validate it)
+        crate::brew::validate::validate_package_name(manifest_target)
+            .with_context(|| format!("Invalid shard name: {}", manifest_target))?;
+        let shards_dir = shellexpand::tilde("~/.sapphire/shards").to_string();
+        Ok(format!("{}/{}.toml", shards_dir, manifest_target))
+    }
 } 

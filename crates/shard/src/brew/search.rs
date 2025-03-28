@@ -29,6 +29,14 @@ pub struct CaskInfo {
     pub description: String,
 }
 
+/// Result of checking package availability
+#[derive(Debug, Clone)]
+pub struct PackageAvailability {
+    pub name: String,
+    pub available_as_formula: bool,
+    pub available_as_cask: bool,
+}
+
 impl BrewSearcher {
     /// Create a new searcher with default brew core
     pub fn new() -> Self {
@@ -223,6 +231,35 @@ impl BrewSearcher {
         
         Ok((formula_count, cask_count))
     }
+
+    /// Check if a package is available as brew formula and/or cask
+    /// This involves calling the external 'brew' command.
+    pub fn check_package_availability(&self, package_name: &str) -> ShardResult<PackageAvailability> {
+        // Validate package name first for safety
+        let validated_name = validation::validate_package_name(package_name)?;
+
+        // Check if it's a brew formula using the core executor
+        let brew_check_output = self.core.execute_brew_command(&["info", "--formula", validated_name]);
+        let available_as_formula = brew_check_output.is_ok(); // Success means it exists
+
+        // Check if it's a cask using the core executor
+        let cask_check_output = self.core.execute_brew_command(&["info", "--cask", validated_name]);
+        let available_as_cask = cask_check_output.is_ok(); // Success means it exists
+
+        // Process output for debug logging
+        if let Ok(output) = &brew_check_output {
+            self.core.process_output(output, &["info", "--formula", validated_name]);
+        }
+        if let Ok(output) = &cask_check_output {
+            self.core.process_output(output, &["info", "--cask", validated_name]);
+        }
+
+        Ok(PackageAvailability {
+            name: package_name.to_string(),
+            available_as_formula,
+            available_as_cask,
+        })
+    }
 }
 
 /// Main search function, used by the CLI
@@ -276,4 +313,9 @@ pub fn search(query: &str, search_type: &str, deep: bool) -> ShardResult<()> {
 /// Get a default searcher instance
 pub fn get_searcher() -> BrewSearcher {
     BrewSearcher::new()
+}
+
+// Add this function to be called from BrewClient
+pub fn check_package_availability(package_name: &str) -> ShardResult<PackageAvailability> {
+    get_searcher().check_package_availability(package_name)
 }

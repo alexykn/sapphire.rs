@@ -28,7 +28,7 @@ pub use client::BrewClient;
 pub use core::BrewCore;
 pub use installer::BrewInstaller;
 pub use search::BrewSearcher;
-pub use search::{FormulaInfo, CaskInfo};
+pub use search::{FormulaInfo, CaskInfo, PackageAvailability};
 
 // Convenience function to get a brew client
 pub fn get_client() -> client::BrewClient {

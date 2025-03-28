@@ -7,6 +7,7 @@
 use crate::ShardResult;
 use crate::brew::core::BrewCore;
 use crate::brew::validate as validation;
+use crate::utils::{log_warning, log_error};
 
 /// Handles installation, uninstallation, updates, and other operations
 /// that modify the local package state
@@ -90,17 +91,27 @@ impl BrewInstaller {
             return Ok(());
         }
         
-        // Validate all package names
-        let mut validated_formulae = Vec::with_capacity(formulae.len());
+        // Install formulae one by one for better error handling
         for formula in formulae {
-            validated_formulae.push(validation::validate_package_name(formula)?);
+            let validated_formula = validation::validate_package_name(formula)?;
+            
+            // Try to install each formula individually
+            let result = self.core.execute_brew_command(&["install", validated_formula]);
+            
+            if let Err(e) = result {
+                // Log the error but continue with other formulae
+                let error_str = e.to_string();
+                if error_str.contains("already installed") {
+                    log_warning(&format!("Skipping {}: {}", formula, error_str));
+                    continue;
+                } else {
+                    log_error(&format!("Error installing {}: {}", formula, error_str));
+                    // Don't fail the entire process for one formula
+                    continue;
+                }
+            }
         }
         
-        // Create a vec with "install" followed by all formula names
-        let mut args = vec!["install"];
-        args.extend(validated_formulae);
-        
-        self.core.execute_brew_command(&args)?;
         Ok(())
     }
 
@@ -114,17 +125,29 @@ impl BrewInstaller {
             return Ok(());
         }
         
-        // Validate all package names
-        let mut validated_casks = Vec::with_capacity(casks.len());
+        // Install casks one by one for better error handling
         for cask in casks {
-            validated_casks.push(validation::validate_package_name(cask)?);
+            let validated_cask = validation::validate_package_name(cask)?;
+            
+            // Try to install each cask individually
+            let result = self.core.execute_brew_command(&["install", "--cask", validated_cask]);
+            
+            if let Err(e) = result {
+                // Log the error but continue with other casks
+                if e.to_string().contains("already a Binary at") || 
+                   e.to_string().contains("already installed") {
+                    // If it's already installed or there's a binary conflict, just skip it
+                    log_warning(&format!("Skipping {}: {}", cask, e));
+                    continue;
+                } else {
+                    // For other errors, log but continue
+                    log_error(&format!("Error installing {}: {}", cask, e));
+                    // Don't fail the entire process for one cask
+                    continue;
+                }
+            }
         }
         
-        // Create a vec with install --cask followed by all cask names
-        let mut args = vec!["install", "--cask"];
-        args.extend(validated_casks);
-        
-        self.core.execute_brew_command(&args)?;
         Ok(())
     }
 
@@ -138,16 +161,20 @@ impl BrewInstaller {
             return Ok(());
         }
         
-        // Validate all package names
-        let mut validated_formulae = Vec::with_capacity(formulae.len());
+        // Upgrade formulae one by one for better error handling
         for formula in formulae {
-            validated_formulae.push(validation::validate_package_name(formula)?);
+            let validated_formula = validation::validate_package_name(formula)?;
+            
+            // Attempt to upgrade each formula individually
+            let result = self.core.execute_brew_command(&["upgrade", validated_formula]);
+            
+            if let Err(e) = result {
+                // Log but continue with other formulae
+                log_warning(&format!("Error upgrading {}: {}", formula, e));
+                continue;
+            }
         }
         
-        let mut args = vec!["upgrade"];
-        args.extend(validated_formulae);
-        
-        self.core.execute_brew_command(&args)?;
         Ok(())
     }
 
@@ -161,16 +188,20 @@ impl BrewInstaller {
             return Ok(());
         }
         
-        // Validate all package names
-        let mut validated_casks = Vec::with_capacity(casks.len());
+        // Upgrade casks one by one for better error handling
         for cask in casks {
-            validated_casks.push(validation::validate_package_name(cask)?);
+            let validated_cask = validation::validate_package_name(cask)?;
+            
+            // Attempt to upgrade each cask individually
+            let result = self.core.execute_brew_command(&["upgrade", "--cask", validated_cask]);
+            
+            if let Err(e) = result {
+                // Log but continue with other casks
+                log_warning(&format!("Error upgrading {}: {}", cask, e));
+                continue;
+            }
         }
         
-        let mut args = vec!["upgrade", "--cask"];
-        args.extend(validated_casks);
-        
-        self.core.execute_brew_command(&args)?;
         Ok(())
     }
 
@@ -245,6 +276,42 @@ impl BrewInstaller {
         }
         
         self.core.execute_brew_command(&args)?;
+        Ok(())
+    }
+
+    pub fn batch_install_formulas(&self, formulas: &[String], args: &[&str]) -> Result<(), String> {
+        if formulas.is_empty() {
+            return Ok(());
+        }
+
+        // Validate all package names before installation to prevent command injection
+        for formula in formulas {
+            match validation::validate_package_name(formula) {
+                Ok(_) => {},
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+
+        // Install each formula individually to handle errors gracefully
+        for formula in formulas {
+            let validated_formula = formula.as_str();
+            
+            // Create command: brew install <args> <formula>
+            let mut cmd = vec!["install"];
+            cmd.extend_from_slice(args);
+            cmd.push(validated_formula);
+            
+            if let Err(e) = self.core.execute_brew_command(&cmd) {
+                let error_str = e.to_string();
+                if error_str.contains("already installed") {
+                    log_warning(&format!("Skipping {}: {}", formula, error_str));
+                    continue;
+                } else {
+                    log_error(&format!("Error installing {}: {}", formula, error_str));
+                }
+            }
+        }
+
         Ok(())
     }
 }
